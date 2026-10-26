@@ -59,8 +59,8 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   const start=async()=>{
     bridge=spawn(process.execPath,['src/bridge.js'],{cwd:code,env,stdio:['ignore','pipe','pipe']});
     bridge.stdout.on('data',d=>output+=d);bridge.stderr.on('data',d=>output+=d);
-    for(let i=0;i<100;i++) {
-      if (i % 10 === 0) stage('start-attempt-' + i);
+    for(let i=0;i<30;i++) {
+      stage('start-attempt-' + i);
       try { if((await api('/api/status')).status===200) { await api('/api/mode',{mode:'reserved2'}); return; } } catch {}
       if(bridge.exitCode!==null)throw new Error(output.slice(-3000));
       await sleep(100);
