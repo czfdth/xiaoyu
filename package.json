@@ -18,7 +18,7 @@
     "boot-check": "node src/bridge.js --check",
     "smoke": "node scripts/self-check.mjs",
     "test:link": "node scripts/test-snowluma-link.mjs",
-    "test:life": "node --test tests/life-mechanisms.test.mjs tests/life-integration.test.mjs tests/reality.test.mjs tests/project-workflow.test.mjs",
+    "test:life": "node --test tests/security-leak.test.mjs tests/life-mechanisms.test.mjs tests/life-integration.test.mjs tests/reality.test.mjs tests/project-workflow.test.mjs",
     "test:pairing": "node scripts/test-pairing.mjs",
     "test:pairing-e2e": "node scripts/test-pairing-e2e.mjs",
     "dsh": "node scripts/dsh-setup.mjs",

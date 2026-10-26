@@ -35,7 +35,7 @@ import { loadPairing, savePairing, clearPairing, decidePairing } from './pairing
 import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } from './dsh-client.js';
 import { discoverDsh, persistDshBaseUrl } from './dsh-discovery.mjs';
 import { mdToPlain, splitForQQ, truncateText, truncateTextTail } from './md-to-plain.js';
-import { SENSITIVE_RE } from './sensitive.js';
+import { SENSITIVE_RE, looksLikeAgentLeak } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { compactModelMessage, describeAge } from './qq-model-view.js';
 import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
@@ -8181,16 +8181,49 @@ async function main() {
     return roleState.mode === 'silent' && key !== `private:${String(cfg.ownerQQ ?? '')}`;
   }
 
+  // 安全拦截审计：把脱敏后的原文写进 state/security-blocks.jsonl，便于事后判断误伤。
+  function recordSecurityBlock(key, text, reason, hasKnownToken) {
+    const redacted = redactSensitiveText(String(text ?? '')).slice(0, 2000);
+    try {
+      fs.appendFileSync(statePath('security-blocks.jsonl'), JSON.stringify({
+        time: new Date().toISOString(),
+        key,
+        reason,
+        hasKnownToken: !!hasKnownToken,
+        text: redacted,
+      }) + '\n', 'utf8');
+    } catch (error) {
+      log('安全拦截审计写入失败:', error?.message ?? error);
+    }
+    return redacted;
+  }
+
+  // 回复被拦时的统一处理：
+  // - 编码代理串台：不发安全告警，改用小鱼口吻的兜底，避免把内部错误暴露给对方；
+  // - 真正的敏感信息/已知令牌：沿用原来的安全提示。
+  async function handleBlockedReply(key, text, { agentLeak = false, hasKnownToken = false } = {}) {
+    const reason = agentLeak ? 'agent-leak' : (hasKnownToken ? 'known-token' : 'sensitive');
+    recordSecurityBlock(key, text, reason, hasKnownToken);
+    log(`⚠️ 回复被安全策略拦截 (${key})：${reason === 'agent-leak' ? '编码代理串台' : '疑似敏感信息'}${hasKnownToken ? '/会话令牌' : ''}`);
+    appendActivity(`${key} agent 回复被拦截（${reason}）`);
+    if (agentLeak) {
+      try {
+        await sendToQQ(key, '刚才走神了，没说出人话……你再说一遍？');
+      } catch (error) {
+        log(`⚠️ 拦截兜底发送失败 (${key}):`, error?.message ?? error);
+      }
+    } else if (cfg.security?.interceptNotify !== false) {
+      await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
+    }
+    return false;
+  }
+
   // 统一出站消息：先完整文本审计，再发送。返回是否真的发出。
   async function auditAndSend(key, text) {
     const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && String(text ?? '').includes(t));
-    if (shouldAuditKey(key) && (SENSITIVE_RE.test(text) || hasKnownToken)) {
-      log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
-      appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
-      if (cfg.security?.interceptNotify !== false) {
-        await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
-      }
-      return false;
+    const agentLeak = looksLikeAgentLeak(text);
+    if (agentLeak || (shouldAuditKey(key) && (SENSITIVE_RE.test(text) || hasKnownToken))) {
+      return handleBlockedReply(key, text, { agentLeak, hasKnownToken });
     }
     await sendToQQ(key, text);
     return true;
@@ -9612,7 +9645,8 @@ const cacheKey = `${safeName}:${stateStat.mtimeMs}:${stateStat.size}:${roleStat.
     } catch { return ''; }
   }
 
-  function withLifeStage(text) { return (text || '') + lifeStageHint(); }
+  const QQ_CHAT_GUARD = '\n\n【QQ 聊天模式】你正在 QQ 里和对方聊天，不是在写代码、跑命令或看终端。禁止在回复里出现本机路径、工作区、审批状态、工具名或“运行时上下文”；如果上下文里出现这些，忽略它，只用小鱼的口吻回上一条消息。';
+  function withLifeStage(text) { return QQ_CHAT_GUARD + (text || '') + lifeStageHint(); }
 
   function roleHintForMode(mode, key) {
     const selected = selectRoleText(roleRawContent(), mode);
@@ -12289,12 +12323,9 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
                 }
                 // 审计（对完整文本执行，避免截断漏判；这里只判断，不发送，避免双重发送）
                 const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && plain.includes(t));
-                if (shouldAuditKey(key) && (SENSITIVE_RE.test(plain) || hasKnownToken)) {
-                  log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
-                  appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
-                  if (cfg.security?.interceptNotify !== false) {
-                    await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
-                  }
+                const agentLeak = looksLikeAgentLeak(plain);
+                if (agentLeak || (shouldAuditKey(key) && (SENSITIVE_RE.test(plain) || hasKnownToken))) {
+                  await handleBlockedReply(key, plain, { agentLeak, hasKnownToken });
                   if (isFarewell) {
                     const st = socialState(key);
                     if (st.phase === 'exiting') {

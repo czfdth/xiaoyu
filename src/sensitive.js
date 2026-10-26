@@ -13,3 +13,11 @@
 // 表情 md5、图片 URL、消息里的十六进制串本身就是 32-hex，加进去会把正常的表情包与消息
 // 整条拦掉/打码（误伤面远大于收益）。要收紧令牌泄漏，请走精确名单那条路。
 export const SENSITIVE_RE = /((?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"'<>|]+|\\\\[^\\\s"'<>|]+\\[^\s"'<>|]+|(?<![A-Za-z0-9])(?:\/home\/|\/Users\/|\/etc\/|\/var\/|\/root\/)[^\s"'<>|]*|(?:token|密码|密钥|口令|password|passwd|secret|api[_-]?key|authorization|bearer|access[_-]?key|credential)["']?(?:\s*(?:[:=：]|是|为)\s*["']?[^\s，。；、"']{3,}|\s+[A-Za-z0-9_\-./]{3,}))/i;
+
+// 编码代理串台：DSH 的 coding preset / 运行时上下文漏进 QQ 回复时的特征。
+// 这不是"敏感信息"（不该给用户看安全告警），而是**角色/模式错了**，应重发人格化兜底。
+export const AGENT_LEAK_RE = /(workspace-write|AI agent powered by DeepSeek Harness|harness system prompt|delegationDepth|当前目录[：:][^\n]{0,4}[A-Za-z]:[\\/]|没有新任务|审批\s*ask|运行时上下文)/i;
+
+export function looksLikeAgentLeak(text) {
+  return AGENT_LEAK_RE.test(String(text ?? ''));
+}
