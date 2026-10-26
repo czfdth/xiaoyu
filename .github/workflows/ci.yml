@@ -30,11 +30,13 @@ jobs:
         run: node scripts/patch-snowluma-sdk.mjs
 
       - name: Unit and pairing tests (bridge integration runs locally)
+        env:
+          XIAOYU_SKIP_BRIDGE_IT: '1'
         run: npm run test:ci
 
       - name: Syntax check
         run: |
           node --check src/bridge.js
           node --check src/mcp-snowluma-safe.js
-          node --check gui/server.mjs
+          node --check gui/server/app.mjs
 
