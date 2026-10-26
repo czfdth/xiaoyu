@@ -26,6 +26,9 @@ jobs:
           npm ci
           npm --prefix gui ci
 
+      - name: Patch SnowLuma ESM imports
+        run: node scripts/patch-snowluma-sdk.mjs
+
       - name: Life and memory tests
         run: npm run test:life
 
