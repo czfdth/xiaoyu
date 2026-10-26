@@ -169,6 +169,20 @@
       "log": "growth.log",
       "mode": "daily",
       "time": "00:10"
+    },
+    {
+      "name": "xiaoyu-backup-offsite",
+      "script": "backup-offsite.mjs",
+      "log": "backup-offsite.log",
+      "mode": "daily",
+      "time": "05:05"
+    },
+    {
+      "name": "xiaoyu-restore-drill",
+      "script": "restore-drill.mjs",
+      "log": "restore-drill.log",
+      "mode": "daily",
+      "time": "05:35"
     }
   ]
 }

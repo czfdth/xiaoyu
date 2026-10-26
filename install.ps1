@@ -52,7 +52,7 @@ if ($srcFull -eq $dstFull) {
     }
     $copied += $d
   }
-  foreach ($f in 'package.json','config.example.json','README.md','LICENSE','install.ps1','一键部署.bat','启动她.bat','停止她.bat','打开管家.bat','查看状态.bat') {
+  foreach ($f in 'package.json','package-lock.json','RELEASE.md','THIRD-PARTY-NOTICES.md','config.example.json','README.md','LICENSE','install.ps1','一键部署.bat','启动她.bat','停止她.bat','打开管家.bat','查看状态.bat') {
     $s = Join-Path $SRC $f
     if (Test-Path $s) { Copy-Item $s (Join-Path $DST $f) -Force; $copied += $f }
   }

@@ -1,6 +1,6 @@
 {
   "name": "xiaoyu",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "license": "MIT",
   "description": "小鱼：跑在自己电脑上的 AI 陪伴机器人（QQ + 声音 + 画图 + 唱歌）。路径只有一个来源：src/paths.js。",
