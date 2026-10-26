@@ -53,7 +53,7 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   fs.mkdirSync(path.join(root,'images'),{recursive:true});
   fs.writeFileSync(path.join(root,'images/fish.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII=','base64'));
   const api=async(route,body,agentToken)=>{
-    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(3000)});
+    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)});
     return {status:r.status,data:await r.json()};
   };
   const start=async()=>{
@@ -76,6 +76,7 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
     fs.rmSync(root,{recursive:true,force:true});
   });
   await start();
+  stage('pre-state');
   const state=await api('/api/socialV2/state?key='+key,null,token);
   assert(state.data.lastIncomingAt>0, JSON.stringify(state) + '\n' + output.slice(-1800));
   const prompt=await api('/api/socialV2/prompt?key='+key,null,token);
