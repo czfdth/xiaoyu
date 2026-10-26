@@ -29,15 +29,8 @@ jobs:
       - name: Patch SnowLuma ESM imports
         run: node scripts/patch-snowluma-sdk.mjs
 
-      - name: Life and memory tests
-        run: npm run test:life
-
-      - name: Show integration stage log
-        if: failure()
-        run: if (Test-Path stage.log) { Get-Content stage.log }
-
-      - name: Pairing E2E (fake OneBot, no real QQ)
-        run: npm run test:pairing-e2e
+      - name: Unit and pairing tests (bridge integration runs locally)
+        run: npm run test:ci
 
       - name: Syntax check
         run: |
