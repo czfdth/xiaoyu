@@ -61,6 +61,20 @@ const filtered = computed(() => {
 
 const matchCount = computed(() => (activeFilter.value ? filtered.value.split('\n').filter(Boolean).length : 0));
 
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 把过滤后的每一行按关键词切开，交给模板上色；没输入关键词时返回空。 */
+const highlighted = computed(() => {
+  const kw = q.value.trim();
+  if (!kw) return [];
+  const re = new RegExp(`(${escapeRe(kw)})`, 'gi');
+  return filtered.value.split('\n').filter(Boolean).map((line) => (
+    line.split(re).map((text, i) => ({ text, hit: i % 2 === 1 }))
+  ));
+});
+
 async function loadFiles() {
   try {
     const r = await get('/logs');
@@ -149,7 +163,12 @@ watch(auto, setupTimer);
       <span class="mono muted small truncate" style="max-width: 60%">{{ current?.file }}</span>
     </div>
     <div ref="box" class="log-view">
-      <pre v-if="filtered" class="pre">{{ filtered }}</pre>
+      <pre v-if="filtered && !q.trim()" class="pre">{{ filtered }}</pre>
+      <div v-else-if="filtered" class="pre log-lines">
+        <div v-for="(parts, i) in highlighted" :key="i" class="log-line">
+          <span v-for="(part, j) in parts" :key="j" :class="{ 'log-hit': part.hit }">{{ part.text }}</span>
+        </div>
+      </div>
       <div v-else class="empty">
         <span class="big-ico">📜</span>
         {{ text ? '没有匹配的行' : (meta?.exists === false ? '这个日志还没生成' : '还没有内容') }}

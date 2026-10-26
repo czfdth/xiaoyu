@@ -64,6 +64,13 @@ function replayRecord(b) {
   runReplay(b.text, b.hasKnownToken);
 }
 
+function exportUrl(format) {
+  const p = new URLSearchParams({ format, limit: '5000' });
+  if (filter.value !== 'all') p.set('reason', filter.value);
+  if (q.value.trim()) p.set('q', q.value.trim());
+  return `/api/security/export?${p.toString()}`;
+}
+
 onMounted(load);
 </script>
 
@@ -142,6 +149,8 @@ onMounted(load);
           >{{ r.label }}</button>
         </div>
         <input v-model="q" class="input" style="width: 180px" placeholder="搜原文…" />
+        <a class="btn sm ghost" :href="exportUrl('csv')" download>导出 CSV</a>
+        <a class="btn sm ghost" :href="exportUrl('jsonl')" download>JSONL</a>
       </template>
 
       <div v-if="!filtered.length" class="empty">

@@ -226,6 +226,13 @@ export function saveToolDisabled(name, disabled) {
   const list = new Set(Array.isArray(cfg.socialV2?.disabledTools) ? cfg.socialV2.disabledTools : []);
   if (disabled) list.add(name); else list.delete(name);
   next.socialV2.disabledTools = [...list].sort();
+  const disabledAt = { ...(cfg.socialV2?.toolDisabledAt ?? {}) };
+  if (disabled) {
+    if (!disabledAt[name]) disabledAt[name] = new Date().toISOString();
+  } else {
+    delete disabledAt[name];
+  }
+  next.socialV2.toolDisabledAt = disabledAt;
   const backupFile = backup(CONFIG_FILE);
   atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
   resetEngineCache();

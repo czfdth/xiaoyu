@@ -260,6 +260,9 @@ a:hover { text-decoration: underline; }
 /* ── 日志 ───────────────────────────────────────────────────────────── */
 .log-view { max-height: 62vh; overflow: auto; }
 .log-view .pre { max-height: none; border: 0; border-radius: 0; background: #080c11; }
+.log-lines { white-space: normal; }
+.log-line { white-space: pre-wrap; word-break: break-word; }
+.log-hit { background: rgba(227, 179, 65, .22); color: #ffd479; border-radius: 3px; }
 
 /* ── 空态 ───────────────────────────────────────────────────────────── */
 .empty { text-align: center; color: var(--muted); padding: 40px 16px; font-size: 13px; }

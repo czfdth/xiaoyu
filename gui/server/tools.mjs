@@ -131,6 +131,52 @@ function usageStats() {
   return stats;
 }
 
+/**
+ * 停用后的调用统计：只看停用时间之后的 tool-calls 记录。
+ * attempts=桥接看到的调用次数；failures=结果为失败的次数；blocked=失败里明确写“工具已停用”的次数。
+ */
+function disabledCallStats(names = [], disabledAt = {}) {
+  const wanted = new Map();
+  for (const name of names) {
+    const at = Date.parse(disabledAt[name] || '') || 0;
+    wanted.set(name, {
+      name,
+      disabledAt: at ? new Date(at).toISOString() : '',
+      sinceMs: at,
+      attempts: 0,
+      failures: 0,
+      blocked: 0,
+      lastAt: 0,
+      lastError: '',
+    });
+  }
+  if (!wanted.size) return {};
+  try {
+    const file = path.join(STATE_DIR, 'tool-calls.jsonl');
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-20000);
+    for (const line of lines) {
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      const short = String(e.tool || '').replace(/^mcp__.+?__/, '');
+      const stat = wanted.get(short);
+      if (!stat) continue;
+      const at = Date.parse(e.time) || 0;
+      if (stat.sinceMs && at < stat.sinceMs) continue;
+      if (e.type === 'call') stat.attempts += 1;
+      if (e.type === 'result' && e.ok === false) {
+        stat.failures += 1;
+        const err = String(e.error || '');
+        if (/工具已停用|disabled/i.test(err)) stat.blocked += 1;
+        if (at >= stat.lastAt) {
+          stat.lastAt = at;
+          stat.lastError = err.slice(0, 300);
+        }
+      }
+    }
+  } catch { /* 没有调用日志就是 0 */ }
+  return Object.fromEntries([...wanted].map(([name, stat]) => [name, stat]));
+}
+
 /** 最近调用明细：按 call/result 配对，返回时间、工具、会话、成败。 */
 function recentCalls(limit = 60) {
   const items = [];
@@ -249,6 +295,7 @@ export async function toolCatalog({ refresh = false } = {}) {
     disabledTotal: all.length - enabledTotal,
     capabilities: caps,
     disabled,
+    disabledStats: disabledCallStats([...disabledSet], cfg.socialV2?.toolDisabledAt ?? {}),
     sources: results.map(({ id, label, ok, error }) => ({ id, label, ok, error: error || '' })),
     groups: ordered,
     recent: recentCalls(60),
@@ -293,7 +340,8 @@ export async function verifyTool(name) {
   };
 }
 
-/** 单个工具的开关：写 config.socialV2.disabledTools，并让缓存失效。 */export async function setToolEnabled(name, enabled) {
+/** 单个工具的开关：写 config.socialV2.disabledTools，并让缓存失效。 */
+export async function setToolEnabled(name, enabled) {
   if (typeof enabled !== 'boolean') {
     const error = new Error('enabled 必须是布尔');
     error.statusCode = 400;

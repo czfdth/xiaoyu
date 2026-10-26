@@ -22,10 +22,10 @@ import {
 } from './data.mjs';
 import { actionList, runAction } from './actions.mjs';
 import { gatewayState, launchGateway } from './gateway.mjs';
-import { replaySecurity } from './security.mjs';
+import { replaySecurity, exportSecurity } from './security.mjs';
 import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
-import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, listNotes, notePath } from './works.mjs';
+import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
 import { desktopPetStatus, startDesktopPet, stopDesktopPet } from './desktoppet.mjs';
 
@@ -100,6 +100,19 @@ export async function buildApp({ guiDir }) {
   app.get('/api/memory/search', async (req) => memorySearch(req.query?.q ?? ''));
 
   app.get('/api/security/blocks', async (req) => securityBlocks(Number(req.query?.limit) || 200));
+  app.get('/api/security/export', async (req, reply) => {
+    const data = securityBlocks(5000);
+    const out = exportSecurity({
+      items: data.items,
+      format: req.query?.format === 'jsonl' ? 'jsonl' : 'csv',
+      reason: req.query?.reason || 'all',
+      q: req.query?.q || '',
+      limit: 5000,
+    });
+    reply.header('content-type', out.contentType);
+    reply.header('content-disposition', `attachment; filename="${out.filename}"`);
+    return reply.send(out.body);
+  });
   app.post('/api/security/replay', async (req) => replaySecurity({
     text: req.body?.text,
     knownToken: req.body?.knownToken === true,
@@ -167,6 +180,10 @@ export async function buildApp({ guiDir }) {
   // 作品集：图库/语音/便签
   app.get('/api/works/images', async (req) => listImages({ limit: Number(req.query?.limit) || 60, offset: Number(req.query?.offset) || 0 }));
   app.get('/api/works/decor', async () => decorImages({ limit: 4 }));
+  app.get('/api/works/avatar', async () => {
+    const name = avatarImage();
+    return { name, url: name ? `/api/works/image/${encodeURIComponent(name)}` : '' };
+  });
   app.get('/api/works/notes', async (req) => listNotes({ limit: Number(req.query?.limit) || 100, offset: Number(req.query?.offset) || 0 }));
   app.get('/api/works/note/:name', async (req, reply) => {
     const { file, type } = notePath(req.params.name);

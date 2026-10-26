@@ -64,6 +64,8 @@ const shown = computed(() => groups.value.reduce((n, g) => n + g.tools.length, 0
 const caps = computed(() => data.value?.capabilities ?? {});
 const enabledTotal = computed(() => data.value?.enabledTotal ?? 0);
 const disabledTotal = computed(() => data.value?.disabledTotal ?? 0);
+const disabledRows = computed(() => Object.values(data.value?.disabledStats ?? {})
+  .sort((a, b) => b.attempts - a.attempts || b.failures - a.failures));
 
 async function toggle(t) {
   if (busy[t.name]) return;
@@ -144,6 +146,26 @@ async function verify(t) {
       <div class="hint" style="margin-top: 10px">
         停用立即生效（桥接会拒绝调用）；重新启用后，工具要等 DSH 重启才会出现在模型的工具列表里。
         同一个开关管着多个工具时会一起变（比如 qq_send_voice 和 qq_list_voices）。
+      </div>
+    </Card>
+
+    <Card v-if="disabledRows.length" title="停用后的调用" :dim="`${disabledRows.length} 个工具`">
+      <div class="stack" style="gap: 6px">
+        <div
+          v-for="s in disabledRows" :key="s.name"
+          class="row"
+          style="gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap"
+        >
+          <span class="mono" style="min-width: 180px">{{ s.name }}</span>
+          <span class="muted small">
+            {{ s.disabledAt ? `停用于 ${fmtTime(Date.parse(s.disabledAt))}` : '停用时间未知' }}
+          </span>
+          <span class="badge">尝试 {{ s.attempts }}</span>
+          <span class="badge" :class="s.failures ? 'warn' : ''">失败 {{ s.failures }}</span>
+          <span v-if="s.blocked" class="badge warn">被停用拦截 {{ s.blocked }}</span>
+          <span v-if="!s.attempts" class="hint small">停用后还没被调用过</span>
+          <span v-if="s.lastError" class="hint small" style="flex-basis: 100%">{{ s.lastError }}</span>
+        </div>
       </div>
     </Card>
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { store, refreshOverview } from './store.js';
 import Toasts from './components/Toasts.vue';
@@ -12,6 +12,15 @@ const sub = computed(() => route.meta.sub || '');
 const bridgeUp = computed(() => Boolean(store.overview?.ports?.bridge));
 const warningCount = computed(() => store.overview?.config?.warnings?.length ?? 0);
 const alerts = computed(() => store.overview?.alerts ?? []);
+const avatar = ref('');
+
+async function loadAvatar() {
+  try {
+    const r = await fetch('/api/works/avatar');
+    const d = await r.json();
+    if (d?.url) avatar.value = d.url;
+  } catch { /* 没有头像就用鲸鱼占位 */ }
+}
 
 const NAV = [
   { to: '/', icon: 'grid', label: '概览' },
@@ -28,6 +37,7 @@ const NAV = [
 let timer = null;
 onMounted(() => {
   refreshOverview();
+  loadAvatar();
   timer = setInterval(() => { if (!document.hidden) refreshOverview({ silent: true }); }, 15000);
 });
 onUnmounted(() => clearInterval(timer));
@@ -37,7 +47,8 @@ onUnmounted(() => clearInterval(timer));
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark">🐋</span>
+        <img v-if="avatar" class="brand-avatar" :src="avatar" alt="" />
+        <span v-else class="brand-mark">🐋</span>
         <div>
           <div class="brand-name">小鱼管家</div>
           <div class="brand-sub">xiaoyu console</div>

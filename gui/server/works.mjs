@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { APP_ROOT } from '../../src/paths.js';
+import { APP_ROOT, readConfig } from '../../src/paths.js';
 
 const IMAGES = path.join(APP_ROOT, 'images');
 const AUDIO = path.join(APP_ROOT, 'audio');
@@ -71,6 +71,25 @@ export function decorImages({ limit = 4 } = {}) {
       .sort((a, b) => b.at - a.at);
     return { files: [...sketches, ...rest].slice(0, Math.max(1, Math.min(8, limit))) };
   } catch { return { files: [] }; }
+}
+
+/**
+ * 控制台头像：优先 config.ui.avatar，其次一张“卖萌”的鲸鱼娘（脸更近），
+ * 再退到开心/得意的鲸鱼娘，最后退回任意一张图片。返回文件名，URL 由前端拼。
+ */
+export function avatarImage() {
+  try {
+    const cfg = readConfig();
+    const chosen = String(cfg.ui?.avatar || '').trim();
+    if (chosen && IMAGE_RE.test(chosen) && fs.existsSync(path.join(IMAGES, chosen))) return chosen;
+    const all = fs.readdirSync(IMAGES)
+      .filter((name) => IMAGE_RE.test(name))
+      .map((name) => ({ name, at: fs.statSync(path.join(IMAGES, name)).mtimeMs }))
+      .sort((a, b) => b.at - a.at);
+    const cute = all.find((f) => /^卖萌-.*鲸鱼娘/.test(f.name))
+      || all.find((f) => /^(开心|得意)-.*鲸鱼娘/.test(f.name));
+    return (cute || all.find((f) => /鲸鱼娘/.test(f.name)) || all[0])?.name || '';
+  } catch { return ''; }
 }
 
 function safePath(dir, name) {
