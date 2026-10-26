@@ -40,7 +40,7 @@ $dstFull = [IO.Path]::GetFullPath($DST).TrimEnd('\')
 if ($srcFull -eq $dstFull) {
   Write-Host '  就在安装目录里运行：跳过复制，只做初始化' -ForegroundColor Yellow
 } else {
-  foreach ($d in 'src','bin','gui','roles','dsh','plugins','public','assets','scripts','images','audio','node_modules','docs','pet') {
+  foreach ($d in 'src','bin','gui','roles','dsh','plugins','public','assets','scripts','images','audio','node_modules','docs','tests','pet') {
     $s = Join-Path $SRC $d
     if (-not (Test-Path $s)) { continue }
     $target = Join-Path $DST $d
