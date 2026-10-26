@@ -63,8 +63,18 @@ try {
   let birth = '';
   if (lifeFile) birth = JSON.parse(fs.readFileSync(lifeFile, 'utf8').replace(/^\uFEFF/, '')).birth || '';
 
+  const keyBuf = Buffer.from(fs.readFileSync(KEY_FILE, 'utf8').trim(), 'base64');
+  const fingerprint = crypto.createHash('sha256').update(keyBuf).digest('hex').slice(0, 16);
+  const escrowFile = opt.keyEscrowDir
+    ? path.join(String(opt.keyEscrowDir).replace(/^~/, process.env.USERPROFILE || ''), 'backup-key.txt')
+    : path.join(process.env.USERPROFILE || ROOT, 'Documents', 'xiaoyu-recovery', 'backup-key.txt');
+  let escrowState = 'missing';
+  try {
+    const txt = fs.readFileSync(escrowFile, 'utf8');
+    escrowState = txt.includes(fingerprint) ? 'ok' : 'mismatch';
+  } catch { /* missing */ }
   const ok = entries.length > 10 && hasConfig;
-  log(`${ok ? '通过' : '失败'}：${dir}\\${latest.name}，${entries.length} 项，config=${hasConfig}，life=${hasLife}，出生=${birth || '—'}`);
+  log(`${ok ? '通过' : '失败'}：${dir}\\${latest.name}，${entries.length} 项，config=${hasConfig}，life=${hasLife}，出生=${birth || '—'}，key=${fingerprint}，escrow=${escrowState}`);
   fs.rmSync(tmp, { recursive: true, force: true });
   process.exit(ok ? 0 : 1);
 } catch (error) {

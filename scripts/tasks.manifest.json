@@ -183,6 +183,13 @@
       "log": "restore-drill.log",
       "mode": "daily",
       "time": "05:35"
+    },
+    {
+      "name": "xiaoyu-backup-key-escrow",
+      "script": "backup-key-escrow.mjs",
+      "log": "backup-key-escrow.log",
+      "mode": "daily",
+      "time": "05:45"
     }
   ]
 }

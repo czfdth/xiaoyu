@@ -20,6 +20,13 @@
 
 ![工具用量](docs/screenshots/tools-usage.png)
 
+## 备份与恢复密钥
+
+- 每天 04:50 本机备份；05:05 加密出站到 OneDrive；05:35 自动恢复演练；05:45 刷新恢复包。
+- 恢复包默认在 `Documents\xiaoyu-recovery`：`backup-key.txt`（明文密钥 + 指纹）和 `RECOVERY.md`（恢复步骤）。
+- 密钥文件是明文，**存进密码管理器或离线 U 盘后请删除本文件**；密钥和 `.enc` 备份不要放在同一块盘。
+- 解密：`node scripts/decrypt-backup.mjs <备份.zip.enc> <输出.zip>`，再 `bin/restore.ps1 -From <输出.zip> -Force`。
+
 ## 从源码运行与测试
 
 需要 Node.js ≥22.13。先安装根目录及管家后端依赖：
