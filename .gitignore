@@ -12,3 +12,11 @@ config.json
 pet/dsh-pet/
 pet/webm/
 .env
+.env.*
+!.env.example
+.npmrc
+companion.json
+companion.json.*
+config.json.*
+.credentials.yaml
+*.enc

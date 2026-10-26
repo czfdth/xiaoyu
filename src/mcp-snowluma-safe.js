@@ -7,6 +7,11 @@
 //   allow.groups / allow.private，否则拒绝 —— agent 只能往被允许的地方发消息。
 // - 所有调用走 OneBot HTTP API（httpUrl + accessToken）。
 import fs from 'node:fs';
+import { narrativeRecord } from './reality.js';
+import { journalEvent } from './memory-attribution.js';
+import { verifyArtifact } from './commitments.js';
+import { updateJson } from './state-store.js';
+import { recordDelivery } from './deliveries.js';
 import { createRequire } from 'node:module';
 globalThis.__singRequire = createRequire(import.meta.url);
 import http from 'node:http';
@@ -116,13 +121,17 @@ async function onebot(action, params = {}) {
     && discoveredAuth.baseUrl === httpUrl;
   const http = createOneBotHttp({ baseUrl: httpUrl, token: cached ? discoveredAuth.token : token });
   try {
-    return await http.call(action, params, { timeoutMs: 15000 });
+    const data = await http.call(action, params, { timeoutMs: 15000 });
+    try { recordDelivery(STATE_FILES.deliveries, action, params, data); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
+    return data;
   } catch (error) {
     if (error?.status !== 401 && error?.retcode !== 1401) throw error;
     const found = await discoverSnowLumaConnection({ cfg: getConfig(), timeoutMs: 3000 });
     if (!found.ok) throw error;
     discoveredAuth = { baseUrl: found.baseUrl, token: found.token, at: Date.now() };
-    return createOneBotHttp({ baseUrl: found.baseUrl, token: found.token }).call(action, params, { timeoutMs: 15000 });
+    const data = await createOneBotHttp({ baseUrl: found.baseUrl, token: found.token }).call(action, params, { timeoutMs: 15000 });
+    try { recordDelivery(STATE_FILES.deliveries, action, params, data); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
+    return data;
   }
 }
 
@@ -351,6 +360,9 @@ const TOOL_CONFIG_FLAGS = {
   qq_get_group_members: 'getGroupMembers',
   qq_memory_append: 'memory',
   qq_memory_query: 'memory',
+  qq_commitments: 'memory',
+  qq_project_workflow: 'memory',
+  qq_recall: 'memory',
   qq_memory_remove: 'memory',
   qq_memory_clear: 'memory',
   qq_slang_query: 'slangQuery',
@@ -1914,6 +1926,7 @@ server.tool(
       }
 
       const row = {
+        ...narrativeRecord('diary', {}),
         t: now.getTime(),
         day,
         time,
@@ -2343,6 +2356,66 @@ server.tool(
   }
 );
 
+// 约定操作走桥接；令牌和会话范围由服务端校验，不能跨群改承诺。
+server.tool(
+  'qq_commitments',
+  '查看或维护当前会话的约定。不传 id/text 就是查看。答应具体事情后，用刚才成功发出的 sourceMessageId 登记；dueAt 必须带时区。旧摘要 needs_review 要重新确认。完成交付必须提供成功发送的 deliveredMessageId；有作品同时提供 evidencePath。失败时标 blocked 并写原因，不要报完成。',
+  {
+    key: z.string(), token: z.string(), id: z.string().optional(), text: z.string().optional(),
+    sourceMessageId: z.string().optional(), dueAt: z.string().nullable().optional(), condition: z.string().optional(),
+    status: z.enum(['needs_review','pending','in_progress','blocked','completed','cancelled']).optional(),
+    note: z.string().optional(), evidencePath: z.string().optional(), deliveredMessageId: z.string().optional(),
+    deliveryRequired: z.boolean().optional()
+  },
+  async ({ key, token, ...input }) => {
+    try {
+      const write = Boolean(input.id || input.text);
+      const data = await agentApi('/api/socialV2/commitments' + (write ? '' : '?key=' + encodeURIComponent(key)), {
+        ...(write ? { method: 'POST', body: JSON.stringify({ key, ...input }) } : {}),
+        headers: { 'x-agent-token': token }
+      });
+      return { content: [{ type: 'text', text: serializeModelData(data) }] };
+    } catch (error) { return { content: [{ type: 'text', text: '约定操作失败：' + error.message }], isError: true }; }
+  }
+);
+
+// 分页任务和项目进度由 bridge 统一、原子更新。
+server.tool(
+  'qq_project_workflow',
+  '查看或推进画册的一页：status/start选题/attach关联新草稿/review给出accept或revise及具体理由/block记录失败/resume到点恢复/archive归档/deliver登记实际交付。生成草稿用qq_draw且不传key，不要每版都发给用户。只有归档才加一页进度，旧页面和修改版本都保留。',
+  {
+    key: z.string(), token: z.string(),
+    action: z.enum(['status','start','attach','review','block','resume','archive','deliver']).optional(),
+    projectId: z.string().optional(), taskId: z.string().optional(), brief: z.string().optional(),
+    evidencePath: z.string().optional(), verdict: z.enum(['accept','revise']).optional(),
+    note: z.string().optional(), sourceMessageId: z.string().optional(), feedbackMessageId: z.string().optional(),
+    failureEventId: z.string().optional(), deliveredMessageId: z.string().optional()
+  },
+  async ({ key, token, action = 'status', ...input }) => {
+    try {
+      const write = action !== 'status';
+      const data = await agentApi('/api/socialV2/project-workflow' + (write ? '' : '?key=' + encodeURIComponent(key)), {
+        ...(write ? { method: 'POST', body: JSON.stringify({ key, action, ...input }) } : {}), headers: { 'x-agent-token': token }
+      });
+      const content = [{ type: 'text', text: serializeModelData(data) }];
+      const task = data.task || data.projects?.flatMap(p => p.workflow?.tasks || []).find(t => t.stage === 'review' || t.stage === 'revise');
+      const artifact = task?.versions?.at(-1)?.artifact;
+      if (artifact && ['review','revise','ready_to_archive'].includes(task.stage)) {
+        const verified = verifyArtifact(ROOT, artifact.path);
+        if (verified.sha256 !== artifact.sha256) throw new Error('草稿文件已经变化，不能继续沿用旧检查结果');
+        const buffer = fs.readFileSync(path.resolve(ROOT, verified.path));
+        if (buffer.length <= 8 * 1024 * 1024) {
+          const mime = buffer.subarray(0,4).toString('hex') === '89504e47' ? 'image/png'
+            : buffer.subarray(0,3).toString() === 'GIF' ? 'image/gif'
+            : buffer.subarray(8,12).toString() === 'WEBP' ? 'image/webp' : 'image/jpeg';
+          content.push({ type: 'image', mimeType: mime, data: buffer.toString('base64') });
+        } else content.push({ type: 'text', text: '图片超过8MB，尚未提供视觉预览；不能声称已经看过图片，请先生成较小版本。' });
+      }
+      return { content };
+    } catch (error) { return { content: [{ type: 'text', text: '页面流程失败：' + error.message }], isError: true }; }
+  }
+);
+
 // ── 长期项目（本仓库扩展）──────────────────────────────────────────────
 const PROJECT_FILE = STATE_FILES.projects;
 
@@ -2354,22 +2427,33 @@ server.tool(
   'qq_project_update',
   '推进你手上的长期项目（比如画册画了一张、故事写了一段）。做完一件就记一下，进度会跟着你。advance 表示这一轮做了几件，note 是这次做了什么。',
   {
-    advance: z.number().optional().describe('这次推进几件，默认 1'),
+    advance: z.number().optional().describe('一次只登记一件可核验作品，必须为 1'),
+    evidencePath: z.string().optional().describe('已生成作品的实际文件路径，必填；重复作品不增加进度'),
     note: z.string().optional().describe('这次做了什么（≤100 字）')
   },
-  async ({ advance, note }) => {
+  async ({ advance, note, evidencePath }) => {
     try {
-      const j = projectRead();
-      const items = Array.isArray(j.items) ? j.items : [];
-      const cur = items.find((x) => x.id === j.active) ?? items[0];
-      if (!cur) return { content: [{ type: 'text', text: '你手上没有正在做的事' }] };
-      const step = Math.max(1, Math.min(5, Number(advance) || 1));
-      cur.done = Math.min(Number(cur.total) || 999, (Number(cur.done) || 0) + step);
-      cur.updatedAt = Date.now();
-      const body = unquoteJsonString(String(note ?? '')).trim().slice(0, 100);
-      if (body) cur.note = body;
-      fs.writeFileSync(PROJECT_FILE, JSON.stringify(j, null, 2), 'utf8');
-      return { content: [{ type: 'text', text: serializeModelData({ ok: true, title: cur.title, done: cur.done, total: cur.total }) }] };
+      if (!evidencePath || (advance !== undefined && advance !== 1)) throw new Error('一次只能登记一件真实作品，提供 evidencePath；失败或没有作品不能增加进度');
+      const evidence = verifyArtifact(ROOT, evidencePath);
+      let updated;
+      updateJson(PROJECT_FILE, { items: [] }, j => {
+        const items = Array.isArray(j.items) ? j.items : [];
+        const cur = items.find(x => x.id === j.active) || items[0];
+        if (!cur) throw new Error('你手上没有正在做的事');
+        if (cur.workflow) throw new Error('项目已启用页面流程，请用 qq_project_workflow 选题、检查并归档，不能跳过步骤');
+        if (cur.kind === 'drawing' && !/\.(png|jpe?g|webp|gif)$/i.test(evidence.path)) throw new Error('画册需要图片作品');
+        cur.artifacts ||= [];
+        if (cur.artifacts.some(e => e.sha256 === evidence.sha256)) throw new Error('这件作品已经登记过，不重复增加进度');
+        if (cur.total && cur.done >= cur.total) throw new Error('项目已经完成');
+        cur.artifacts.push({ ...evidence, registeredAt: Date.now() });
+        cur.done = (Number(cur.done) || 0) + 1;
+        cur.updatedAt = Date.now();
+        const body = unquoteJsonString(String(note || '')).trim().slice(0, 100);
+        if (body) cur.note = body;
+        updated = cur;
+        return j;
+      });
+      return { content: [{ type: 'text', text: serializeModelData({ ok: true, title: updated.title, done: updated.done, total: updated.total, evidence }) }] };
     } catch (error) {
       return { content: [{ type: 'text', text: '更新项目失败：' + (error?.message ?? error) }], isError: true };
     }
@@ -2381,7 +2465,7 @@ server.tool(
 // 数据源是 state/journal/ 下每天一个 jsonl。
 const JOURNAL_DIR = STATE_FILES.journalDir;
 
-function recallSearch(query, days) {
+function recallSearch(query, days, key) {
   if (!fs.existsSync(JOURNAL_DIR)) return [];
   const files = fs.readdirSync(JOURNAL_DIR).filter((f) => f.endsWith('.jsonl')).sort().reverse();
   const cutoff = Date.now() - Math.max(1, Math.min(365, Number(days) || 30)) * 86400000;
@@ -2396,11 +2480,11 @@ function recallSearch(query, days) {
     for (const line of lines) {
       let row; try { row = JSON.parse(line); } catch { continue; }
       const text = String(row.text ?? '');
-      if (!text) continue;
+      if (!text || row.key !== key) continue;
       const hay = text.toLowerCase();
       let score = 0;
       for (const term of terms) if (hay.includes(term)) score += 1;
-      if (score > 0) hits.push({ day, at: row.t, role: row.role, text, score });
+      if (score > 0) hits.push({ day, at: row.t, role: row.role, text, score, event: journalEvent(row, cfg.ownerQQ) });
     }
   }
   hits.sort((a, b) => b.score - a.score || b.at - a.at);
@@ -2411,21 +2495,24 @@ server.tool(
   'qq_recall',
   '翻自己的旧聊天记录（按关键词搜，最近 90 天内）。想不起他说过什么、想接上以前的话题时用它；搜到的是原话，比记忆摘要更具体。',
   {
+    key: z.string().describe('当前会话 key，不能翻其它群或私聊'),
+    token: z.string().describe('当前会话令牌'),
     query: z.string().describe('关键词，比如 薯片 / 生气 / 下雨'),
     days: z.number().optional().describe('往前翻多少天，默认 30，最多 365'),
     limit: z.number().optional().describe('最多返回几条，默认 8')
   },
-  async ({ query, days, limit }) => {
+  async ({ key, token, query, days, limit }) => {
     try {
       const q = unquoteJsonString(String(query ?? '')).trim();
       if (!q) return { content: [{ type: 'text', text: 'query 不能为空' }], isError: true };
-      const hits = recallSearch(q, days);
+      await agentApi('/api/socialV2/state?key=' + encodeURIComponent(key), { headers: { 'x-agent-token': token } });
+      const hits = recallSearch(q, days, key);
       if (!hits.length) return { content: [{ type: 'text', text: '没翻到相关的（可以换关键词，或者放宽天数）' }] };
       const top = hits.slice(0, Math.max(1, Math.min(20, Number(limit) || 8)));
       const lines = top.map((h) => {
         const who = h.role === 'her' ? '我' : (h.role === 'owner' ? '他' : '别人');
         const time = new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        return `[${time}] ${who}：${h.text.slice(0, 120)}`;
+        return `[${time}] ${who}（人物:${h.event?.speakerId || '未知'} 消息:${h.event?.messageId || '无ID'} 事件:${h.event?.eventId || '未知'}）：${h.text.slice(0, 120)}`;
       });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
@@ -2810,7 +2897,7 @@ server.tool(
       const body = unquoteJsonString(String(dream ?? '')).trim().slice(0, 400);
       if (body.length < 6) return { content: [{ type: 'text', text: '太短了，梦没那么短' }], isError: true };
       fs.mkdirSync(path.dirname(DREAM_FILE), { recursive: true });
-      const entry = { at: Date.now(), dream: body, feel: unquoteJsonString(String(feel ?? '')).trim().slice(0, 8) };
+      const entry = { ...narrativeRecord('dream', {}), at: Date.now(), dream: body, feel: unquoteJsonString(String(feel ?? '')).trim().slice(0, 8) };
       fs.appendFileSync(DREAM_FILE, JSON.stringify(entry) + '\n', 'utf8');
       return { content: [{ type: 'text', text: serializeModelData({ ok: true, total: readDreams().length }) }] };
     } catch (error) {
@@ -2860,7 +2947,7 @@ server.tool(
         if (cur.note) lines.push('具体：' + cur.note);
         return { content: [{ type: 'text', text: lines.length ? lines.join('\n') : '身体没什么特别的感觉。' }] };
       }
-      const next = { ...cur, ...newState, updatedAt: Date.now() };
+      const next = narrativeRecord('body', { ...cur, ...newState, updatedAt: Date.now() });
       fs.mkdirSync(path.dirname(BODY_FILE), { recursive: true });
       fs.writeFileSync(BODY_FILE, JSON.stringify(next, null, 2), 'utf8');
       return { content: [{ type: 'text', text: serializeModelData({ ok: true, body: next }) }] };
@@ -2929,6 +3016,7 @@ server.tool(
         if (v !== undefined && v !== null && String(v).trim()) next[k] = unquoteJsonString(String(v)).trim().slice(0, 200);
       }
       next.updatedAt = Date.now();
+      Object.assign(next, narrativeRecord('inner', {}));
       fs.mkdirSync(path.dirname(INNER_FILE), { recursive: true });
       fs.writeFileSync(INNER_FILE, JSON.stringify(next, null, 2), 'utf8');
       return { content: [{ type: 'text', text: serializeModelData({ ok: true, state: next }) }] };
@@ -2947,7 +3035,7 @@ server.tool(
       const body = unquoteJsonString(String(thought ?? '')).trim().slice(0, 300);
       if (body.length < 4) return { content: [{ type: 'text', text: '太短' }], isError: true };
       fs.mkdirSync(path.dirname(INTROSPECT_FILE), { recursive: true });
-      fs.appendFileSync(INTROSPECT_FILE, JSON.stringify({ at: Date.now(), thought: body }) + '\n', 'utf8');
+      fs.appendFileSync(INTROSPECT_FILE, JSON.stringify(narrativeRecord('introspection', { at: Date.now(), thought: body })) + '\n', 'utf8');
       return { content: [{ type: 'text', text: serializeModelData({ ok: true }) }] };
     } catch (error) {
       return { content: [{ type: 'text', text: '自省记录失败：' + (error?.message ?? error) }], isError: true };
@@ -3172,7 +3260,7 @@ server.tool(
       const body = unquoteJsonString(String(text ?? '')).trim().slice(0, 500);
       if (body.length < 4) return { content: [{ type: 'text', text: '太短了' }], isError: true };
       fs.mkdirSync(path.dirname(FANTASY_FILE), { recursive: true });
-      const entry = { id: Date.now().toString(36), at: Date.now(), text: body, tag: unquoteJsonString(String(tag ?? '')).trim().slice(0, 10) };
+      const entry = { ...narrativeRecord('fantasy', {}), id: Date.now().toString(36), at: Date.now(), text: body, tag: unquoteJsonString(String(tag ?? '')).trim().slice(0, 10) };
       fs.appendFileSync(FANTASY_FILE, JSON.stringify(entry) + '\n', 'utf8');
       return { content: [{ type: 'text', text: serializeModelData({ ok: true, id: entry.id, total: fantasyRead().length }) }] };
     } catch (error) {
@@ -3227,7 +3315,7 @@ server.tool(
       const now = new Date();
       const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
       const name = '第' + String(n).padStart(2, '0') + '章-' + day + '.md';
-      const text = `# 第${n}章　${ttl}\n\n*${day}*
+      const text = `# 第${n}章　${ttl}\n\n*${day}*\n\n> 回忆叙述：其中感受和想象不等于已核验的现实事件。
 
 ${body}\n`;
       fs.writeFileSync(path.join(MEMOIR_DIR, name), text, 'utf8');

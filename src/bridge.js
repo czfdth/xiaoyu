@@ -6,6 +6,11 @@
 //
 // 用法：node src/bridge.js （先编辑 ../config.json）
 import fs from 'node:fs';
+import { projectView, changeProject, projectHint } from './project-workflow.js';
+import { readObservations } from './reality.js';
+import { contentKind, recordToolObservation, realityHint } from './reality.js';
+import { promptMemories } from './memory-attribution.js';
+import { listCommitments, changeCommitment, commitmentHint } from './commitments.js';
 import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
@@ -1926,7 +1931,7 @@ async function main() {
       at: Date.now()
     };
     st.recentMessages.push(entry);
-    journalV2(key, 'her', display);
+    journalV2(key, 'her', display, { messageId: entry.messageId });
     if (st.recentMessages.length > 200) st.recentMessages = st.recentMessages.slice(-200);
     st.lastAiReplyAt = entry.at;
     st.lastActionAt = entry.at;
@@ -4721,6 +4726,36 @@ async function main() {
           sendJson({ ok: true });
           return;
         }
+        if (url.pathname === '/api/socialV2/project-workflow' && ['GET', 'POST'].includes(req.method)) {
+          const body = req.method === 'POST' ? await readBody() : {};
+          const key = String(body.key || url.searchParams.get('key') || '').trim();
+          if (key !== `private:${cfg.ownerQQ}` || !v2SessionAllowed(key)) { sendJson({ ok: false, error: '画册流程仅用于当前用户私聊' }, 403); return; }
+          if (req.headers['x-agent-token'] && (!agentTokenOk(key, req.headers['x-agent-token']) || !v2ToolEnabled('memory'))) { sendJson({ ok: false, error: '令牌无效或记忆工具未启用' }, 403); return; }
+          try {
+            if (req.method === 'GET') sendJson({ ok: true, projects: projectView(STATE_FILES.projects, key) });
+            else {
+              const st = getSocialV2State(key);
+              const result = changeProject(STATE_FILES.projects, key, body, { root: ROOT, messages: commitmentMessages(key, st), observations: readObservations(STATE_FILES.realityEvents, key, 1000) });
+              sendJson({ ok: true, ...result });
+            }
+          } catch (error) { sendJson({ ok: false, error: error.message }, 400); }
+          return;
+        }
+        if (url.pathname === '/api/socialV2/commitments' && ['GET', 'POST'].includes(req.method)) {
+          const body = req.method === 'POST' ? await readBody() : {};
+          const key = String(body.key || url.searchParams.get('key') || '').trim();
+          if (!/^(private|group):\d+$/.test(key) || !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标会话不可用' }, 403); return; }
+          if (req.headers['x-agent-token'] && (!agentTokenOk(key, req.headers['x-agent-token']) || !v2ToolEnabled('memory'))) { sendJson({ ok: false, error: '令牌无效或记忆工具未启用' }, 403); return; }
+          try {
+            if (req.method === 'GET') sendJson({ ok: true, items: listCommitments(STATE_FILES.commitments, STATE_FILES.longTermMemory, key, cfg.ownerQQ) });
+            else {
+              const st = getSocialV2State(key);
+              const item = changeCommitment(STATE_FILES.commitments, STATE_FILES.longTermMemory, key, cfg.ownerQQ, body, { root: ROOT, messages: commitmentMessages(key, st) });
+              sendJson({ ok: true, item });
+            }
+          } catch (error) { sendJson({ ok: false, error: error.message }, 400); }
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/state') {
           const key = String(url.searchParams.get('key') ?? '').trim();
           if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
@@ -4736,6 +4771,7 @@ async function main() {
             unreadCount: st.unread.length,
             recentCount: st.recentMessages.length,
             lastWakeReason: st.lastWakeReason,
+            lastIncomingAt: st.lastIncomingAt || 0,
             lastAiReplyAt: st.lastAiReplyAt
           });
           return;
@@ -4769,7 +4805,7 @@ async function main() {
             getActiveMembers: 'qq_get_active_members',
             setWakeConfig: 'qq_set_wake_config',
             markRead: 'qq_mark_read',
-            memory: 'qq_memory_append / qq_memory_query / qq_memory_remove / qq_memory_clear',
+            memory: 'qq_memory_append / qq_memory_query / qq_memory_remove / qq_memory_clear / qq_recall / qq_commitments / qq_project_workflow',
             slangQuery: 'qq_slang_query',
             slangSubmit: 'qq_slang_submit',
             getImages: 'qq_get_message_images',
@@ -4811,7 +4847,7 @@ async function main() {
               userId: selfUserId || null,
               line: selfIdentityTextV2().trim() || null
             },
-            role: { name: roleState.role ?? null, hint: currentMode === 'reserved2' ? currentRoleHintV2() : currentRoleHint() },
+            role: { name: roleState.role ?? null, hint: currentMode === 'reserved2' ? currentRoleHintV2(key) : currentRoleHint(key) },
             recommended: cfg.socialV2?.provideRecommendations === false ? null : {
               wake: cfg.socialV2?.wake ?? {},
               send: cfg.socialV2?.send ?? {},
@@ -5103,6 +5139,9 @@ async function main() {
             sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
             return;
           }
+          if (['proactiveCheck', 'commitment', 'project'].includes(reason) && (!dshReady || socialV2.paused || cfg.socialV2?.enabled === false || !snowlumaHealthSnapshot().connected || snowlumaHealthSnapshot().accountOnline === false)) {
+            sendJson({ ok: false, accepted: false, error: '主动社交暂不可用：连接或大脑未就绪' }, 409); return;
+          }
           const st = getSocialV2State(key);
           if (st.pendingWakeTimer) {
             clearTimeout(st.pendingWakeTimer);
@@ -5121,7 +5160,7 @@ async function main() {
           // 表面上"唤醒成功"，实际上谁也不知道它失败了。
           void sendWakePromptV2(key, effectiveReason).catch((error) => log(`[reserved2] 手动唤醒异常 ${key}:`, error?.message ?? error));
           log(`控制台：手动唤醒 ${key}（${effectiveReason}${firstWake && reason !== effectiveReason ? `，首次唤醒，请求原因 ${reason} 已升级为 bootstrap` : ''}）`);
-          sendJson({ ok: true, key, reason: effectiveReason, requestedReason: reason, firstWake });
+          sendJson({ ok: true, accepted: true, completed: false, key, reason: effectiveReason, requestedReason: reason, firstWake });
           return;
         }
         // 操作者预写的「会话初始提示词」：控制台专用（AI 既读不到也改不了 —— adminOnlyV2Paths）。
@@ -5274,7 +5313,7 @@ async function main() {
             const delays = computeGapsV2(messages, 'auto', undefined, undefined, sendCfg);
             const sentMessages = await sendMessagesV2(key, messages, delays);
             recordSentMessagesV2(key, sentMessages);
-            for (const text of messages) journalV2(key, 'her', text);
+            // Successful messages and their receipts are journaled by recordSentMessagesV2.
             st.lastAiReplyAt = now;
             st.lastActionAt = now;
             st.wakeConfig.noActionCount = 0;
@@ -5285,7 +5324,7 @@ async function main() {
             const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
             const spaceWarn = findCjkSpaceWarning(messages);
             const splitWarn = findSplitBoundaryWarning(messages);
-            sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
+            sendJson({ ok: true, key, sent: sentMessages.length, receipts: sentMessages.receipts || [], failed: messages.length - sentMessages.length, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
           } catch (error) {
             if (error?.sent?.length) {
               recordSentMessagesV2(key, error.sent);
@@ -5426,7 +5465,7 @@ async function main() {
             recordSentMessagesV2(key, sentMessages);
             // 她的真实出口是这个端点（工具统一发送）：必须在这里记 journal，
             // 否则夜间记忆提炼只看得到"他"说的话，看不到她怎么回的。
-            for (const text of messages) journalV2(key, 'her', text);
+            // Successful messages and their receipts are journaled by recordSentMessagesV2.
             st.lastAiReplyAt = now;
             st.lastActionAt = now;
             st.wakeConfig.noActionCount = 0;
@@ -5437,7 +5476,7 @@ async function main() {
             const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
             const spaceWarn = findCjkSpaceWarning(messages);
             const splitWarn = findSplitBoundaryWarning(messages);
-            sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, delays, quoted: quotedInfo, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
+            sendJson({ ok: true, key, sent: sentMessages.length, receipts: sentMessages.receipts || [], failed: messages.length - sentMessages.length, delays, quoted: quotedInfo, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
           } catch (error) {
             if (error?.sent?.length) {
               recordSentMessagesV2(key, error.sent);
@@ -8092,7 +8131,9 @@ async function main() {
       sendChain = sendChain
         .then(async () => {
           assertSendAllowed();
-          await onebotSend(kind, id, msg, useReply, useAt);
+          const receipt = await onebotSend(kind, id, msg, useReply, useAt);
+          sent.receipts ||= [];
+          sent.receipts.push({ messageId: receipt?.message_id == null ? null : String(receipt.message_id), time: Date.now() });
           sent.push(msg);
         })
         .catch((error) => {
@@ -8107,7 +8148,7 @@ async function main() {
     return sendChain.then(() => {
       if (failed.length > 0) {
         const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
-        err.sent = sent.slice();
+        err.sent = Object.assign(sent.slice(), { receipts: sent.receipts || [] });
         throw err;
       }
       return sent;
@@ -9176,7 +9217,7 @@ async function main() {
     st.activeExitAt = now;
     // 先取消尚未触发的旧回复/补刀定时器，避免退场期间再冒出旧发言
     cancelSocialTimers(key);
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(key);
     const promptText = buildActiveExitPrompt(key, roleHint);
     scheduleSocialReply(
       key, promptText,
@@ -9357,7 +9398,7 @@ async function main() {
               st.proactiveNextCheckAt = now + randInt(Number(cfg.social?.proactiveCheckMinMs ?? 2700000), Number(cfg.social?.proactiveCheckMaxMs ?? 5400000));
               if (Math.random() < Number(cfg.social?.proactiveProbability ?? 0.2)) {
                 enterActive(key);
-                const roleHint = currentRoleHint();
+                const roleHint = currentRoleHint(key);
                 const promptText = buildProactivePrompt(key, roleHint);
                 scheduleSocialReply(
                   key, promptText,
@@ -9473,7 +9514,7 @@ async function main() {
         log(`摘要投喂创建会话失败 (${k}): ${error?.message ?? error}`);
         continue;
       }
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(k);
       const summaryText = `${roleHint ? roleHint + '\n\n' : ''}【群聊摘要】过去一段时间群里发生了这些（你未逐条参与）：\n${lines}\n\n【最近对话】\n${buildContextBlock(k)}\n\n你不需要回复，只需记住这些内容，后续聊天会更自然。`;
       const silentId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       social.silentTurns.set(sessionId, [...(social.silentTurns.get(sessionId) ?? []), { id: silentId, ts: Date.now() }]);
@@ -9573,9 +9614,9 @@ const cacheKey = `${safeName}:${stateStat.mtimeMs}:${stateStat.size}:${roleStat.
 
   function withLifeStage(text) { return (text || '') + lifeStageHint(); }
 
-  function roleHintForMode(mode) {
+  function roleHintForMode(mode, key) {
     const selected = selectRoleText(roleRawContent(), mode);
-    const mem = memoryHintBlock();
+    const mem = memoryHintBlock(key);
     const mood = moodHintBlock();
     
 function innerStateLine() {
@@ -9585,7 +9626,7 @@ function innerStateLine() {
     const keys = { doing: '刚才在做', thinking: '心里在想', worrying: '惦记着', lastTopic: '上次说到', mood: '心情', curious: '好奇' };
     const parts = Object.entries(j).filter(([k, v]) => keys[k] && v).map(([k, v]) => keys[k] + '：' + v);
     if (!parts.length) return '';
-    return '\n\n【你此刻的状态】' + parts.join('；') + '（想改就用 qq_inner_state）';
+    return '\n\n【你记录的内心状态（自述，非环境观察）】' + parts.join('；') + '（想改就用 qq_inner_state）';
   } catch { return ''; }
 }
 
@@ -9649,7 +9690,7 @@ function dailyDiaryLine() {
     if (!file) return '';
     const body = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').trim();
     const tail = body.slice(-240).replace(/\n+/g, ' ');
-    return '\n【前一阵你写过】' + tail + '\n（这是你自己写的，可以接着想。）';
+    return '\n【前一阵你写过的叙述（未核验）】' + tail + '\n（这是日记或回忆录的自述，不是独立的事实证明；梦和想象不能变成实际经历。）';
   } catch { return ''; }
 }
 
@@ -9682,7 +9723,7 @@ function bodyLine() {
       .map(([k, v]) => nm[k] + (v > 0.75 ? '得厉害' : v > 0.55 ? '得有点明显' : '了一点'));
     if (j.note) parts.push(j.note);
     if (!parts.length) return '';
-    return '\n【身体】' + parts.join('；') + '。';
+    return '\n【角色身体状态（模拟，非生理测量）】' + parts.join('；') + '。';
   } catch { return ''; }
 }
 
@@ -9709,21 +9750,8 @@ function peopleLine() {
 
 
 function hassleLine() {
-  try {
-    const p = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..', 'state', 'hassle.json');
-    const day = new Date().toISOString().slice(0, 10);
-    let j = {};
-    try { j = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); } catch {}
-    if (j.day !== day || !j.text) {
-      const pool = ["钥匙不知道放哪了，找了半天才发现一直在口袋里","鞋后跟磨脚，走两步就疼","楼下在装修，电钻声一阵一阵的","外卖送错了，打开是别人的饭","想喝的那瓶牛奶昨天过期了","晾的衣服被风吹到楼下，捡回来还得重洗","手机充电线接触不良，得摆个特定角度","刚洗的头被雨淋了","想找的东西翻遍都没找到，放弃之后突然出现","水壶里还剩一点水，倒出来不够一杯","台灯闪了两下，拍一下就又亮了","楼上的小孩一直在跑，天花板咚咚响"];
-      // 用日期做种子，同一天稳定
-      let seed = 0;
-      for (const ch of day) seed = (seed * 31 + ch.charCodeAt(0)) % 100000;
-      j = { day, text: pool[seed % pool.length] };
-      fs.writeFileSync(p, JSON.stringify(j, null, 2), 'utf8');
-    }
-    return '\n【今天有点麻烦】' + j.text + '。';
-  } catch { return ''; }
+  // Old hassle.json remains untouched. Never manufacture real-world incidents from a fixed pool.
+  return '';
 }
 
 
@@ -9741,7 +9769,7 @@ function dreamLine() {
     const hours = age / 3600000;
     const fade = hours < 2 ? '记得很清楚' : hours < 8 ? '只记得一些片段' : '只剩一点影子';
     const text = hours < 2 ? last.dream : last.dream.slice(0, 90) + '…';
-    return '\n【昨晚的梦】' + text + (last.feel ? '（醒来时' + last.feel + '）' : '') + '（' + fade + '）';
+    return '\n【梦的记录（想象内容，没有实际发生）】' + text + (last.feel ? '（醒来时' + last.feel + '）' : '') + '（' + fade + '）';
   } catch { return ''; }
 }
 
@@ -9776,8 +9804,8 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     if (!extra) return base;
     return base ? base + extra : extra.trim();
   }
-  function currentRoleHint() {
-    return withLifeStage(roleHintForMode('v1'));
+  function currentRoleHint(key) {
+    return withLifeStage(roleHintForMode('v1', key));
   }
 
   // 二代仿真模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
@@ -9867,9 +9895,9 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     return `第 ${bad.join('，')} 条之间像是把同一句话拆开了；如果两条拼起来才完整，请合并成一条，或把断点移到完整句子的边界。`;
   }
 
-  function currentRoleHintV2() {
+  function currentRoleHintV2(key) {
     // 先按 〔二代〕/〔一代〕 标记筛小节；下面的逐行过滤只是给「没标记的老卡片」兜底。
-    const raw = withLifeStage(roleHintForMode('v2'));
+    const raw = withLifeStage(roleHintForMode('v2', key));
     if (!raw) return '';
     // 一代仿真模式专用指令整行过滤，避免污染二代工具协议。
     // 用 role-card.js 导出的那份（文件顶部已 import）：这里原先又抄了一份同源正则，
@@ -10108,6 +10136,28 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   // ── 二代仿真模式（reserved2）唤醒调度 ──────────────────────────────────
   // ── 长期记忆：原始流水 + 提示词注入 ─────────────────────────────────
   // journal 是给夜间提炼用的原始流水（收发都记），memory 是炼出来的结论。
+  function commitmentMessages(key, st) {
+    const messages = [...st.recentMessages];
+    if (fs.existsSync(STATE_FILES.deliveries)) {
+      for (const line of fs.readFileSync(STATE_FILES.deliveries, 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        let receipt; try { receipt = JSON.parse(line); } catch { continue; }
+        if (receipt.key === key) messages.push(receipt);
+      }
+    }
+    const dir = STATE_FILES.journalDir;
+    if (!fs.existsSync(dir)) return messages;
+    for (const name of fs.readdirSync(dir).filter(n => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort().slice(-30)) {
+      for (const line of fs.readFileSync(path.join(dir, name), 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        let row; try { row = JSON.parse(line); } catch { continue; }
+        if (row.key === key && row.messageId != null) messages.push({ messageId: String(row.messageId), text: row.text,
+          isSelf: row.role === 'her', isOwner: row.role === 'owner', time: row.t });
+      }
+    }
+    return messages;
+  }
+
   function journalV2(key, role, text, extra = {}) {
     try {
       const body = String(text ?? '').trim();
@@ -10116,7 +10166,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const dir = statePath('journal');
       fs.mkdirSync(dir, { recursive: true });
-      fs.appendFileSync(path.join(dir, `${day}.jsonl`), JSON.stringify({ t: now.getTime(), key, role, text: body.slice(0, 500), ...extra }) + '\n', 'utf8');
+      fs.appendFileSync(path.join(dir, `${day}.jsonl`), JSON.stringify({ t: now.getTime(), eventId: crypto.randomUUID(), key, role, realityKind: contentKind(body, role), text: body.slice(0, 500), ...extra }) + '\n', 'utf8');
     } catch {}
   }
 
@@ -10266,24 +10316,24 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     } catch {}
   }
 
-  function memoryHintBlock() {
+  function memoryHintBlock(key) {
     try {
       const file = statePath('memory', 'long-term.json');
       const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const items = Array.isArray(j?.items) ? j.items : [];
+      const items = promptMemories(Array.isArray(j?.items) ? j.items : [], key, cfg.ownerQQ);
       if (!items.length) return '';
       const max = Number(cfg.socialV2?.memory?.injectChars) || 700;
       const sorted = [...items].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0) || (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0));
       const lines = [];
       let used = 0;
       for (const it of sorted) {
-        const line = `- ${it.text}`;
-        if (used + line.length > max) break;
+        const line = `- ${it.realityKind ? '[' + it.realityKind + '] ' : ''}${it.subjectId ? `[人物:${it.subjectId}] ` : '[旧摘要/来源未核实] '}${it.text}`;
+        if (used + line.length > max) continue;
         lines.push(line);
         used += line.length + 1;
       }
       if (!lines.length) return '';
-      return `\n\n## 你记得的事（长期记忆，自然使用，不要背出来）\n${lines.join('\n')}`;
+      return `\n\n## 你记得的事（仅当前会话；旧摘要可能过时，身份和称呼以当前角色及当事人明确纠正为准；承诺是否完成查约定工具）\n${lines.join('\n')}`;
     } catch { return ''; }
   }
 
@@ -10299,7 +10349,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
         return;
       }
     }
-    journalV2(key, isOwner ? 'owner' : 'them', plainContent || textContent, { sender });
+    journalV2(key, isOwner ? 'owner' : 'them', plainContent || textContent, { sender, senderId: userId == null ? null : String(userId), messageId: messageId == null ? null : String(messageId) });
     const st = getSocialV2State(key);
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const unreadLimit = Number(cfg.socialV2?.context?.unreadLimit) || 30;
@@ -10424,7 +10474,10 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const list = Array.isArray(messages) ? messages : [];
     for (let i = 0; i < list.length; i++) {
       const text = redactKnownTokensOnly(String(list[i] ?? '')).slice(0, 200);
+      const receipt = messages.receipts?.[i];
+      journalV2(key, 'her', String(list[i] ?? ''), { messageId: receipt?.messageId || null });
       st.recentMessages.push({
+        messageId: receipt?.messageId || null,
         sender: '我',
         text,
         plain: text,
@@ -10501,6 +10554,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       // 用内存计数上限的追加器：不再「append 完再读回整个文件数行数」——
       // 那个写法在 2000 行（约 650KB）时单次要 15ms，而每次工具调用要写两条。
       appendToolLogFile(`${JSON.stringify(safeEntry)}\n`);
+      recordToolObservation(STATE_FILES.realityEvents, safeEntry);
     } catch (error) {
       log('写入工具调用日志失败:', error?.message ?? error);
     }
@@ -10812,7 +10866,8 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const memoryText = formatMemoryV2(st);
-    const memoryLine = memoryText ? `${memoryText}\n\n` : '';
+    const workflowLine = key === `private:${cfg.ownerQQ}` ? projectHint(projectView(STATE_FILES.projects, key)) : '';
+    const memoryLine = workflowLine + (memoryText ? `${memoryText}\n\n` : '') + commitmentHint(listCommitments(STATE_FILES.commitments, STATE_FILES.longTermMemory, key, cfg.ownerQQ));
     // 独处时长：她自己"过了多久"的唯一来源（模型没有时钟）
     const idleSince = Number(st.lastIncomingAt || st.lastActionAt || 0);
     const idleMin = idleSince ? Math.max(0, Math.round((Date.now() - idleSince) / 60000)) : 0;
@@ -10865,7 +10920,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
-    const base = roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + timeSenseLine;
+    const base = realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
@@ -10879,6 +10934,12 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     }
     if (reason === 'replyCheck') {
       return `${base}【回复检查】${key}\n原因：你刚刚说过话，回来看看他有没有接。\n有回复就接着聊：**别只回一句就停**，顺着他的话再补一两句、或者问一句把话题递回去。\n如果话题还没聊完（他刚回你、或者你还有话想说），就主动接一句，不要收尾。\n他确实没回时也别刷屏：用 qq_wait_for_messages(purpose="reply") 等一会儿；还没动静，再决定是抛个新话头还是收尾（qq_set_wake_config）。`;
+    }
+    if (reason === 'project') {
+      return `${base}【独立推进画册】先查看页面任务状态，只推进当前一步；任务受阻且未到重试时间、或需要用户帮助时不要再生成。草稿生成时 qq_draw 不传 key，避免每一版都打扰用户。检查、修改和归档要保留实际文件与理由；没有新结果不发送进度闲聊。`;
+    }
+    if (reason === 'commitment') {
+      return `${base}【接续约定】检查当前约定的来源、状态和到期时间。仅推进已经核实、条件满足的事项；先处理未读，不催办用户自己的承诺。用 qq_commitments 记录进展、受阻原因或经验证的完成。没有可执行事项就安静收尾，不得为了履约编造作品或发送结果。`;
     }
     if (reason === 'life') {
       const hour = new Date().getHours();
@@ -11639,7 +11700,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     }
 
     // 角色扮演提示注入（仅注入给 agent，不影响群友之间的正常对话语义）
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(key);
 
     // 群聊里带发送者信息，私聊不用；角色提示注入到消息开头（agent 可见）；
     // 管理员消息带身份标记（供 agent 识别，但其权限仍受工具面硬限制）
@@ -11707,7 +11768,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
 
       // 触发成功：进入活跃，贴最近上下文 + 当前消息 + 人格（仅此一次），让 AI 回复
       enterActive(key);
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(key);
       const currentLine = (isOwner && kind === 'private') ? `【管理员】${sender}：${textContent}` : `${sender}：${textContent}`;
       const directionHint = textContent.includes('[引用') ? DIRECTION_HINT + '\n' : '';
       const replyInstruction = direct
