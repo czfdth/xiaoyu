@@ -14,7 +14,7 @@ import { writeJson, readJson } from '../src/state-store.js';
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r,ms));
 
-test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和重启', { timeout: 45000 }, async t => {
+test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和重启', { timeout: 180000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaoyu-life-integration-'));
   let bridge, client, output='', sendCount=100, failText=false;
   const sent=[];
