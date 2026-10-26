@@ -1,8 +1,23 @@
 # 小鱼
 
+[![Release](https://img.shields.io/github/v/release/czfdth/xiaoyu?label=release&color=2ea44f)](https://github.com/czfdth/xiaoyu/releases)
+[![Downloads](https://img.shields.io/github/downloads/czfdth/xiaoyu/total?label=downloads)](https://github.com/czfdth/xiaoyu/releases)
+[![License](https://img.shields.io/github/license/czfdth/xiaoyu)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)](#)
+
 一个跑在自己电脑上的 AI 陪伴机器人：接 QQ，有声音、会画画、会唱歌、会写日记。
 
 这是源码仓库。私人配置、记忆、图片、音频、备份和依赖目录不随 Git 上传；发行包可另行包含运行依赖与授权素材。代码不依赖某个旧仓库的绝对路径。
+
+## 截图
+
+工具页（每个工具的启用状态与用量）：
+
+![工具页](docs/screenshots/tools.png)
+
+工具用量与停用：
+
+![工具用量](docs/screenshots/tools-usage.png)
 
 ## 从源码运行与测试
 
