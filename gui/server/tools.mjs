@@ -131,6 +131,35 @@ function usageStats() {
   return stats;
 }
 
+/** 最近调用明细：按 call/result 配对，返回时间、工具、会话、成败。 */
+function recentCalls(limit = 60) {
+  const items = [];
+  const pending = new Map();
+  try {
+    const file = path.join(STATE_DIR, 'tool-calls.jsonl');
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-5000);
+    for (const line of lines) {
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      if (!String(e.tool || '').startsWith('mcp__')) continue;
+      const short = String(e.tool).replace(/^mcp__.+?__/, '');
+      if (!short) continue;
+      const at = Date.parse(e.time) || 0;
+      const k = `${e.key || ''}|${short}`;
+      if (e.type === 'call') {
+        const item = { at, tool: short, key: e.key || '', ok: null };
+        items.push(item);
+        if (!pending.has(k)) pending.set(k, []);
+        pending.get(k).push(item);
+      } else if (e.type === 'result') {
+        const item = pending.get(k)?.shift();
+        if (item) item.ok = e.ok !== false;
+      }
+    }
+  } catch { /* 没日志就是没用过 */ }
+  return items.slice(-limit).reverse();
+}
+
 
 /** 工具元数据快照：停用后 MCP 下次启动就不再列出它，靠快照仍能在面板里显示并重新启用。 */
 function loadSnapshot() {
@@ -222,6 +251,7 @@ export async function toolCatalog({ refresh = false } = {}) {
     disabled,
     sources: results.map(({ id, label, ok, error }) => ({ id, label, ok, error: error || '' })),
     groups: ordered,
+    recent: recentCalls(60),
   };
   cache = { at: Date.now(), data };
   return data;

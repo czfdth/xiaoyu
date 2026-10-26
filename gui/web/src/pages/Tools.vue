@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 import { get, post } from '../api.js';
-import { toast, toastError } from '../store.js';
+import { toast, toastError, fmtTime } from '../store.js';
 import Card from '../components/Card.vue';
 
 const data = ref(null);
@@ -127,6 +127,23 @@ async function toggle(t) {
       <div class="hint" style="margin-top: 10px">
         停用立即生效（桥接会拒绝调用）；重新启用后，工具要等 DSH 重启才会出现在模型的工具列表里。
         同一个开关管着多个工具时会一起变（比如 qq_send_voice 和 qq_list_voices）。
+      </div>
+    </Card>
+
+    <Card v-if="data?.recent?.length" title="最近调用" :dim="`${data.recent.length} 条`">
+      <div class="stack" style="gap: 6px">
+        <div
+          v-for="(r, i) in data.recent" :key="i"
+          class="row"
+          style="gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px"
+        >
+          <span class="badge" :class="r.ok === true ? 'ok' : r.ok === false ? 'warn' : ''">
+            {{ r.ok === true ? '成功' : r.ok === false ? '失败' : '进行中' }}
+          </span>
+          <span class="mono" style="min-width: 180px">{{ r.tool }}</span>
+          <span class="muted small" style="flex: 1; min-width: 0">{{ r.key }}</span>
+          <span class="muted small">{{ fmtTime(r.at) }}</span>
+        </div>
       </div>
     </Card>
 

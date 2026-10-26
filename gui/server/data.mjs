@@ -391,8 +391,7 @@ export function memoryCounts() {
   };
 }
 
-export function memorySearch(q, limit = 100) {
-  const needle = String(q ?? '').trim().toLowerCase();
+export function memorySearch(q, limit = 100) {  const needle = String(q ?? '').trim().toLowerCase();
   if (!needle) return { query: '', items: [] };
   const items = [];
   for (const kind of MEMORY_KINDS) {
@@ -416,6 +415,31 @@ export function memorySearch(q, limit = 100) {
   }
   items.sort((a, b) => b.at - a.at);
   return { query: q, items: items.slice(0, limit) };
+}
+
+// ── 安全拦截审计 ────────────────────────────────────────────────────────────
+export function securityBlocks(limit = 200) {
+  const rows = jsonlRows(path.join(STATE_DIR, 'security-blocks.jsonl'));
+  const now = Date.now();
+  const items = rows.map((r, i) => ({
+    id: i,
+    at: Date.parse(r.time) || 0,
+    key: String(r.key ?? ''),
+    reason: String(r.reason ?? 'sensitive'),
+    hasKnownToken: Boolean(r.hasKnownToken),
+    text: String(r.text ?? ''),
+  })).sort((a, b) => b.at - a.at);
+  const count = (reason) => items.filter((x) => x.reason === reason).length;
+  return {
+    total: items.length,
+    last24h: items.filter((x) => now - x.at < 86400000).length,
+    reasons: {
+      agentLeak: count('agent-leak'),
+      knownToken: count('known-token'),
+      sensitive: count('sensitive'),
+    },
+    items: items.slice(0, limit),
+  };
 }
 
 // ── 人格卡 ──────────────────────────────────────────────────────────────────

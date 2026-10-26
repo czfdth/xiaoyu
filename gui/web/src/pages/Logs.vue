@@ -1,20 +1,29 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, nextTick, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { get } from '../api.js';
 import { toast, toastError } from '../store.js';
 import Card from '../components/Card.vue';
 import Icon from '../components/Icon.vue';
 
+const route = useRoute();
 const files = ref([]);
 const name = ref('bridge');
 const lines = ref(200);
 const auto = ref(true);
 const text = ref('');
+const q = ref(typeof route.query.q === 'string' ? route.query.q : '');
 const meta = ref(null);
 const box = ref(null);
 let timer = null;
 
 const current = computed(() => files.value.find((f) => f.name === name.value));
+const filtered = computed(() => {
+  const kw = q.value.trim().toLowerCase();
+  if (!kw) return text.value;
+  return text.value.split('\n').filter((line) => line.toLowerCase().includes(kw)).join('\n');
+});
+const matchCount = computed(() => (q.value.trim() ? filtered.value.split('\n').filter(Boolean).length : 0));
 
 async function loadFiles() {
   try {
@@ -38,8 +47,8 @@ async function load({ scroll = true } = {}) {
 
 async function copy() {
   try {
-    await navigator.clipboard.writeText(text.value);
-    toast('已复制');
+    await navigator.clipboard.writeText(filtered.value);
+    toast(q.value.trim() ? `已复制 ${matchCount.value} 行匹配` : '已复制');
   } catch { toast('复制失败（浏览器权限）', 'err'); }
 }
 
@@ -70,6 +79,8 @@ watch(auto, setupTimer);
         <option :value="500">500 行</option>
         <option :value="1000">1000 行</option>
       </select>
+      <input v-model="q" class="input" style="width: 190px" placeholder="过滤日志行…" />
+      <span v-if="q.trim()" class="badge">{{ matchCount }} 行匹配</span>
       <label class="row small muted" style="gap: 6px; cursor: pointer">
         <input v-model="auto" type="checkbox" /> 自动刷新
       </label>
@@ -89,10 +100,10 @@ watch(auto, setupTimer);
       <span class="mono muted small truncate" style="max-width: 60%">{{ current?.file }}</span>
     </div>
     <div ref="box" class="log-view">
-      <pre v-if="text" class="pre">{{ text }}</pre>
+      <pre v-if="filtered" class="pre">{{ filtered }}</pre>
       <div v-else class="empty">
         <span class="big-ico">📜</span>
-        {{ meta?.exists === false ? '这个日志还没生成' : '还没有内容' }}
+        {{ text ? '没有匹配的行' : (meta?.exists === false ? '这个日志还没生成' : '还没有内容') }}
       </div>
     </div>
   </Card>

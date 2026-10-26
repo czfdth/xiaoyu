@@ -22,6 +22,7 @@ const NAV = [
   { to: '/persona', icon: 'id', label: '人格卡' },
   { to: '/config', icon: 'gear', label: '配置' },
   { to: '/logs', icon: 'terminal', label: '日志' },
+  { to: '/security', icon: 'shield', label: '安全' },
 ];
 
 let timer = null;

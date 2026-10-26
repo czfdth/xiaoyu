@@ -14,6 +14,7 @@ import { assertLocalRequest, HttpError } from './guard.mjs';
 import {
   overview, configView, saveConfig, runSetup,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
+  securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
   pairingView, startPairing, cancelPairing,
   discoverDshForUi, applyDshBaseUrl, gpuMode, setGpuMode,
@@ -96,6 +97,8 @@ export async function buildApp({ guiDir }) {
   app.get('/api/memory/summary', async () => memoryCounts());
 
   app.get('/api/memory/search', async (req) => memorySearch(req.query?.q ?? ''));
+
+  app.get('/api/security/blocks', async (req) => securityBlocks(Number(req.query?.limit) || 200));
 
   app.get('/api/memory/:kind', async (req) => ({
     kind: req.params.kind,

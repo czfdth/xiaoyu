@@ -7,6 +7,7 @@ import Tools from './pages/Tools.vue';
 import Life from './pages/Life.vue';
 import Config from './pages/Config.vue';
 import Logs from './pages/Logs.vue';
+import Security from './pages/Security.vue';
 import Setup from './pages/Setup.vue';
 
 export const routes = [
@@ -18,6 +19,7 @@ export const routes = [
   { path: '/persona', name: 'persona', component: Persona, meta: { title: '人格卡', sub: '每条消息都会注入的那张卡' } },
   { path: '/config', name: 'config', component: Config, meta: { title: '配置', sub: '白名单、模型、网关、引擎路径' } },
   { path: '/logs', name: 'logs', component: Logs, meta: { title: '日志', sub: '她今天都干了什么' } },
+  { path: '/security', name: 'security', component: Security, meta: { title: '安全', sub: '被本地策略拦下的回复' } },
   { path: '/setup', name: 'setup', component: Setup, meta: { title: '首次设置', sub: '四步把她接上 QQ' } },
 ];
 
