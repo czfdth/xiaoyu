@@ -1,15 +1,22 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { get } from '../api.js';
 import { toastError, fmtClock, fmtTime, pct } from '../store.js';
 import Card from '../components/Card.vue';
 
-const tab = ref('state');
+const route = useRoute();
+
+const tab = ref(route.query.tab === 'talk' || route.query.q ? 'talk' : 'state');
 const her = ref(null);
 const days = ref([]);
 const day = ref('');
 const journal = ref(null);
 const timeline = ref(null);
+const q = ref(typeof route.query.q === 'string' ? route.query.q : '');
+const hits = ref([]);
+const searching = ref(false);
+const searched = ref(false);
 
 const BODY = [
   { key: 'sleepy', label: '困' },
@@ -35,7 +42,7 @@ async function loadDays() {
   try {
     const r = await get('/journal/days');
     days.value = r.days ?? [];
-    if (!day.value) day.value = days.value[0] ?? new Date().toISOString().slice(0, 10);
+    if (!day.value) day.value = typeof route.query.day === 'string' ? route.query.day : (days.value[0] ?? new Date().toISOString().slice(0, 10));
   } catch (e) { toastError(e); }
 }
 
@@ -48,14 +55,39 @@ async function loadJournal() {
   } catch (e) { toastError(e); }
 }
 
+async function runSearch() {
+  const text = q.value.trim();
+  if (!text) { hits.value = []; searched.value = false; return; }
+  searching.value = true;
+  try {
+    const r = await get(`/journal/search?q=${encodeURIComponent(text)}`);
+    hits.value = r.items ?? [];
+    searched.value = true;
+  } catch (e) {
+    toastError(e);
+  } finally {
+    searching.value = false;
+  }
+}
+
+async function openHit(h) {
+  q.value = '';
+  hits.value = [];
+  searched.value = false;
+  if (day.value === h.day) await loadJournal();
+  else day.value = h.day;
+}
+
 function who(m) {
   if (m.role === 'her') return '她';
   return m.sender || (String(m.key).startsWith('group:') ? '群里' : '他');
 }
 
 onMounted(async () => {
+  if (q.value.trim()) tab.value = 'talk';
   await Promise.all([loadHer(), loadDays()]);
   await loadJournal();
+  if (q.value.trim()) runSearch();
 });
 
 watch(tab, (v) => { if (v === 'talk') loadJournal(); });
@@ -119,9 +151,29 @@ watch(day, loadJournal);
           <option v-if="!days.length" :value="day">{{ day }}</option>
         </select>
         <span v-if="journal" class="badge">{{ journal.messages.length }} 条</span>
+        <input
+          v-model="q"
+          class="input"
+          style="width: 220px"
+          placeholder="搜聊天记录…"
+          @keyup.enter="runSearch"
+        />
+        <button class="btn sm" :disabled="searching" @click="runSearch">{{ searching ? '搜…' : '搜索' }}</button>
       </div>
       <button class="btn sm" @click="loadJournal">刷新</button>
     </div>
+
+    <Card v-if="searched" title="聊天搜索" :dim="`${hits.length} 条`" tight style="margin-bottom: 12px">
+      <div v-if="!hits.length" class="empty" style="padding: 20px 12px">没有找到</div>
+      <div v-else class="list">
+        <div v-for="(h, i) in hits" :key="`${h.day}:${i}`" class="list-item" @click="openHit(h)">
+          <div style="min-width: 0">
+            <div class="t truncate">{{ who(h) }} · {{ h.day }} {{ fmtClock(h.t) }}</div>
+            <div class="muted small truncate">{{ h.text }}</div>
+          </div>
+        </div>
+      </div>
+    </Card>
 
     <Card flush>
       <div v-if="!journal || !journal.messages.length" class="empty">

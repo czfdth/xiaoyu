@@ -13,7 +13,7 @@ import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
 import {
   overview, configView, saveConfig, runSetup,
-  herState, journal, journalDays, memoryList, memoryRead, memoryCounts,
+  herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   roleList, roleRead, roleWrite, logList, logTail,
   pairingView, startPairing, cancelPairing,
   discoverDshForUi, applyDshBaseUrl, gpuMode, setGpuMode,
@@ -89,9 +89,13 @@ export async function buildApp({ guiDir }) {
 
   app.get('/api/journal', async (req) => journal(req.query?.day));
 
+  app.get('/api/journal/search', async (req) => journalSearch(req.query?.q ?? ''));
+
   app.get('/api/journal/days', async () => ({ days: journalDays(60) }));
 
   app.get('/api/memory/summary', async () => memoryCounts());
+
+  app.get('/api/memory/search', async (req) => memorySearch(req.query?.q ?? ''));
 
   app.get('/api/memory/:kind', async (req) => ({
     kind: req.params.kind,

@@ -298,8 +298,30 @@ export function journalDays(limit = 30) {
     .slice(0, limit);
 }
 
+export function journalSearch(q, limit = 50) {
+  const needle = String(q ?? '').trim().toLowerCase();
+  if (!needle) return { query: '', items: [] };
+  const items = [];
+  for (const day of journalDays(90)) {
+    const { messages } = journal(day);
+    messages.forEach((m, i) => {
+      if (!String(m.text ?? '').toLowerCase().includes(needle)
+        && !String(m.sender ?? '').toLowerCase().includes(needle)) return;
+      items.push({ day, i, ...m });
+    });
+  }
+  items.sort((a, b) => (b.t ?? 0) - (a.t ?? 0));
+  return { query: q, items: items.slice(0, limit) };
+}
+
 // ── 记忆 ────────────────────────────────────────────────────────────────────
-const MEMORY_KINDS = new Set(['diary', 'memoir', 'dreams', 'fantasies']);
+const MEMORY_KINDS = new Set(['diary', 'memoir', 'dreams', 'fantasies', 'knowledge']);
+
+function jsonlRows(file) {
+  return readText(file).split('\n').filter(Boolean).map((line, i) => {
+    try { return { i, ...JSON.parse(line) }; } catch { return null; }
+  }).filter(Boolean);
+}
 
 export function memoryList(kind) {
   if (!MEMORY_KINDS.has(kind)) throw new HttpError(400, '未知的记忆类型');
@@ -311,10 +333,17 @@ export function memoryList(kind) {
     return listFiles(STATE_FILES.memoirDir, /\.md$/).sort((a, b) => b.name.localeCompare(a.name))
       .map((f) => ({ id: f.name, title: f.name.replace(/\.md$/, ''), ...f }));
   }
+  if (kind === 'knowledge') {
+    return jsonlRows(STATE_FILES.knowledgeIndex).reverse().map((r) => ({
+      id: String(r.id ?? r.i),
+      title: r.title || '一条知识',
+      at: r.createdAt ?? 0,
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      excerpt: String(r.text ?? '').slice(0, 80),
+    }));
+  }
   const file = kind === 'dreams' ? STATE_FILES.dreams : STATE_FILES.fantasies;
-  const rows = readText(file).split('\n').filter(Boolean).map((line, i) => {
-    try { return { i, ...JSON.parse(line) }; } catch { return null; }
-  }).filter(Boolean);
+  const rows = jsonlRows(file);
   return rows.reverse().map((r) => ({
     id: String(r.id ?? r.i),
     title: kind === 'dreams' ? (r.feel || '一个梦') : (r.tag || '幻想'),
@@ -335,10 +364,16 @@ export function memoryRead(kind, id) {
     if (content === null) throw new HttpError(404, '没找到这篇');
     return { kind, id: name, content, ...statOf(full) };
   }
+  if (kind === 'knowledge') {
+    const row = jsonlRows(STATE_FILES.knowledgeIndex).find((r) => String(r.id ?? r.i) === String(id));
+    if (!row) throw new HttpError(404, '没找到这条');
+    return {
+      kind, id, title: row.title ?? '', content: row.text ?? '',
+      tags: Array.isArray(row.tags) ? row.tags : [], at: row.createdAt ?? 0,
+    };
+  }
   const file = kind === 'dreams' ? STATE_FILES.dreams : STATE_FILES.fantasies;
-  const rows = readText(file).split('\n').filter(Boolean).map((line, i) => {
-    try { return { i, ...JSON.parse(line) }; } catch { return null; }
-  }).filter(Boolean);
+  const rows = jsonlRows(file);
   const row = rows.find((r) => String(r.id ?? r.i) === String(id));
   if (!row) throw new HttpError(404, '没找到这条');
   return kind === 'dreams'
@@ -352,7 +387,35 @@ export function memoryCounts() {
     memoir: listFiles(STATE_FILES.memoirDir, /\.md$/).length,
     dreams: readText(STATE_FILES.dreams).split('\n').filter(Boolean).length,
     fantasies: readText(STATE_FILES.fantasies).split('\n').filter(Boolean).length,
+    knowledge: readText(STATE_FILES.knowledgeIndex).split('\n').filter(Boolean).length,
   };
+}
+
+export function memorySearch(q, limit = 100) {
+  const needle = String(q ?? '').trim().toLowerCase();
+  if (!needle) return { query: '', items: [] };
+  const items = [];
+  for (const kind of MEMORY_KINDS) {
+    let list = [];
+    try { list = memoryList(kind); } catch { continue; }
+    for (const it of list) {
+      let detail;
+      try { detail = memoryRead(kind, it.id); } catch { continue; }
+      const content = String(detail.content ?? '');
+      const tags = Array.isArray(detail.tags) ? detail.tags : [];
+      const hay = [it.title, content, tags.join(' ')].join('\n').toLowerCase();
+      if (!hay.includes(needle)) continue;
+      const at = content.toLowerCase().indexOf(needle);
+      const start = Math.max(0, at - 40);
+      items.push({
+        kind, id: it.id, title: it.title || it.id,
+        at: it.at || it.mtime || 0, tags,
+        snippet: content.slice(start, start + 140).replace(/\s+/g, ' ').trim(),
+      });
+    }
+  }
+  items.sort((a, b) => b.at - a.at);
+  return { query: q, items: items.slice(0, limit) };
 }
 
 // ── 人格卡 ──────────────────────────────────────────────────────────────────
