@@ -13,6 +13,7 @@ import { writeJson, readJson } from '../src/state-store.js';
 
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r,ms));
+const stage = (s) => console.error(`[stage] ${s} ${new Date().toISOString()}`);
 
 test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和重启', { timeout: 180000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaoyu-life-integration-'));
@@ -80,8 +81,10 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   assert.equal((await api('/api/socialV2/commitments?key='+key,null,other)).status,403);
   assert.equal((await api('/api/socialV2/wake',{key,reason:'proactiveCheck'})).status,409);
 
+  stage('before-mcp-connect');
   client=new Client({name:'life-integration',version:'1.0.0'},{capabilities:{}});
   await client.connect(new StdioClientTransport({command:process.execPath,args:['src/mcp-snowluma-safe.js'],cwd:code,env,stderr:'ignore'}));
+  stage('mcp-connected');
   const tools=(await client.listTools()).tools;
   assert(tools.some(t=>t.name==='qq_commitments'));
   assert.doesNotMatch(prompt.data.role.hint, /今天有点麻烦/);
@@ -129,8 +132,10 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   assert.equal(readJson(path.join(root,'state/projects.json')).items[0].done,10);
   assert.equal((await call('qq_project_update',{advance:1,evidencePath:'images/page10.png'})).error,true);
   const pending=await call('qq_commitments',{key,token,text:'另一个约定',sourceMessageId:'11'});assert.equal(pending.error,false);
+  stage('before-restart');
   const oldPid=bridge.pid, exited=once(bridge,'exit');
-  await api('/api/restart',{});await exited;await start();assert.notEqual(bridge.pid,oldPid);
+  await api('/api/restart',{});await exited;await start();
+  stage('restarted');assert.notEqual(bridge.pid,oldPid);
   const after=await api('/api/socialV2/commitments?key='+key,null,token);
   assert.equal(after.data.items.find(e=>e.id===id).status,'completed');
   assert.equal(after.data.items.find(e=>e.id===pending.data.item.id).status,'pending');
@@ -138,5 +143,6 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   const pages=await call('qq_project_workflow',{key,token});
   assert.equal(pages.data.projects[0].workflow.tasks[0].stage,'archived');
   assert(pages.data.projects[0].workflow.tasks[0].delivery);
+  stage('done');
   assert.equal(sent.length,3); // One image + one successful text, all against the fake gateway.
 });
