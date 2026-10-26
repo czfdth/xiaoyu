@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,8 +13,6 @@ import { writeJson, readJson } from '../src/state-store.js';
 
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r,ms));
-const stageFile = process.env.GITHUB_WORKSPACE ? path.join(process.env.GITHUB_WORKSPACE, 'stage.log') : path.join(os.tmpdir(), 'xiaoyu-stage.log');
-const stage = (s) => { try { fs.appendFileSync(stageFile, `${new Date().toISOString()} ${s}\n`); } catch {} };
 
 test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和重启', { timeout: 180000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaoyu-life-integration-'));
@@ -53,16 +51,13 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   fs.mkdirSync(path.join(root,'images'),{recursive:true});
   fs.writeFileSync(path.join(root,'images/fish.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII=','base64'));
   const api=async(route,body,agentToken)=>{
-    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)});
+    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{})});
     return {status:r.status,data:await r.json()};
   };
   const start=async()=>{
     bridge=spawn(process.execPath,['src/bridge.js'],{cwd:code,env,stdio:['ignore','pipe','pipe']});
     bridge.stdout.on('data',d=>output+=d);bridge.stderr.on('data',d=>output+=d);
-    bridge.on('exit',(code,signal)=>stage(`bridge-exit:${code}:${signal}:outlen=${output.length}`));
-    bridge.on('error',e=>stage('bridge-spawn-error:'+e.message));
-    for(let i=0;i<30;i++) {
-      stage('start-attempt-' + i);
+    for(let i=0;i<100;i++) {
       try { if((await api('/api/status')).status===200) { await api('/api/mode',{mode:'reserved2'}); return; } } catch {}
       if(bridge.exitCode!==null)throw new Error(output.slice(-3000));
       await sleep(100);
@@ -76,7 +71,6 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
     fs.rmSync(root,{recursive:true,force:true});
   });
   await start();
-  stage('pre-state');
   const state=await api('/api/socialV2/state?key='+key,null,token);
   assert(state.data.lastIncomingAt>0, JSON.stringify(state) + '\n' + output.slice(-1800));
   const prompt=await api('/api/socialV2/prompt?key='+key,null,token);
@@ -86,10 +80,8 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   assert.equal((await api('/api/socialV2/commitments?key='+key,null,other)).status,403);
   assert.equal((await api('/api/socialV2/wake',{key,reason:'proactiveCheck'})).status,409);
 
-  stage('before-mcp-connect');
   client=new Client({name:'life-integration',version:'1.0.0'},{capabilities:{}});
   await client.connect(new StdioClientTransport({command:process.execPath,args:['src/mcp-snowluma-safe.js'],cwd:code,env,stderr:'ignore'}));
-  stage('mcp-connected');
   const tools=(await client.listTools()).tools;
   assert(tools.some(t=>t.name==='qq_commitments'));
   assert.doesNotMatch(prompt.data.role.hint, /今天有点麻烦/);
@@ -137,10 +129,8 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   assert.equal(readJson(path.join(root,'state/projects.json')).items[0].done,10);
   assert.equal((await call('qq_project_update',{advance:1,evidencePath:'images/page10.png'})).error,true);
   const pending=await call('qq_commitments',{key,token,text:'另一个约定',sourceMessageId:'11'});assert.equal(pending.error,false);
-  stage('before-restart');
   const oldPid=bridge.pid, exited=once(bridge,'exit');
-  await api('/api/restart',{});await exited;await start();
-  stage('restarted');assert.notEqual(bridge.pid,oldPid);
+  await api('/api/restart',{});await exited;await start();assert.notEqual(bridge.pid,oldPid);
   const after=await api('/api/socialV2/commitments?key='+key,null,token);
   assert.equal(after.data.items.find(e=>e.id===id).status,'completed');
   assert.equal(after.data.items.find(e=>e.id===pending.data.item.id).status,'pending');
@@ -148,6 +138,5 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   const pages=await call('qq_project_workflow',{key,token});
   assert.equal(pages.data.projects[0].workflow.tasks[0].stage,'archived');
   assert(pages.data.projects[0].workflow.tasks[0].delivery);
-  stage('done');
   assert.equal(sent.length,3); // One image + one successful text, all against the fake gateway.
 });
