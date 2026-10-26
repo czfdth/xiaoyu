@@ -13,17 +13,53 @@ const lines = ref(200);
 const auto = ref(true);
 const text = ref('');
 const q = ref(typeof route.query.q === 'string' ? route.query.q : '');
+const level = ref('all');
+const since = ref('all');
 const meta = ref(null);
 const box = ref(null);
 let timer = null;
 
 const current = computed(() => files.value.find((f) => f.name === name.value));
+
+function levelOf(line) {
+  if (/(^|\s)(error|fatal|exception|traceback|错误|失败|❌|⛔)/i.test(line)) return 'error';
+  if (/(^|\s)(warn|warning|警告|⚠️|重试|超时|timeout)/i.test(line)) return 'warn';
+  return 'info';
+}
+
+function tsOf(line) {
+  const full = line.match(/\[?(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (full) return new Date(`${full[1]}T${full[2]}`).getTime();
+  const hm = line.match(/^\[?(\d{2}):(\d{2}):(\d{2})/);
+  if (hm) {
+    const d = new Date();
+    d.setHours(Number(hm[1]), Number(hm[2]), Number(hm[3]), 0);
+    return d.getTime();
+  }
+  return 0;
+}
+
+const activeFilter = computed(() => Boolean(q.value.trim()) || level.value !== 'all' || since.value !== 'all');
+
 const filtered = computed(() => {
   const kw = q.value.trim().toLowerCase();
-  if (!kw) return text.value;
-  return text.value.split('\n').filter((line) => line.toLowerCase().includes(kw)).join('\n');
+  const sinceMs = since.value === 'all' ? 0 : Number(since.value) * 60000;
+  const now = Date.now();
+  let last = 0;
+  const out = [];
+  for (const line of String(text.value || '').split('\n')) {
+    if (!line.trim()) continue;
+    const ts = tsOf(line);
+    if (ts) last = ts;
+    if (sinceMs && (!last || now - last > sinceMs)) continue;
+    if (level.value !== 'all' && levelOf(line) !== level.value) continue;
+    if (kw && !line.toLowerCase().includes(kw)) continue;
+    out.push(line);
+  }
+  return out.join('\n');
 });
-const matchCount = computed(() => (q.value.trim() ? filtered.value.split('\n').filter(Boolean).length : 0));
+
+const matchCount = computed(() => (activeFilter.value ? filtered.value.split('\n').filter(Boolean).length : 0));
 
 async function loadFiles() {
   try {
@@ -48,7 +84,7 @@ async function load({ scroll = true } = {}) {
 async function copy() {
   try {
     await navigator.clipboard.writeText(filtered.value);
-    toast(q.value.trim() ? `已复制 ${matchCount.value} 行匹配` : '已复制');
+    toast(activeFilter.value ? `已复制 ${matchCount.value} 行匹配` : '已复制');
   } catch { toast('复制失败（浏览器权限）', 'err'); }
 }
 
@@ -80,7 +116,20 @@ watch(auto, setupTimer);
         <option :value="1000">1000 行</option>
       </select>
       <input v-model="q" class="input" style="width: 190px" placeholder="过滤日志行…" />
-      <span v-if="q.trim()" class="badge">{{ matchCount }} 行匹配</span>
+      <select v-model="level" class="select" style="width: 110px">
+        <option value="all">全部级别</option>
+        <option value="error">只看错误</option>
+        <option value="warn">只看警告</option>
+        <option value="info">只看信息</option>
+      </select>
+      <select v-model="since" class="select" style="width: 130px">
+        <option value="all">全部时间</option>
+        <option value="10">最近 10 分钟</option>
+        <option value="30">最近 30 分钟</option>
+        <option value="60">最近 1 小时</option>
+        <option value="180">最近 3 小时</option>
+      </select>
+      <span v-if="activeFilter" class="badge">{{ matchCount }} 行匹配</span>
       <label class="row small muted" style="gap: 6px; cursor: pointer">
         <input v-model="auto" type="checkbox" /> 自动刷新
       </label>

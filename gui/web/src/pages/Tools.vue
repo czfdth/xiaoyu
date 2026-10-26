@@ -10,6 +10,8 @@ const error = ref('');
 const q = ref('');
 const sort = ref('usage');
 const busy = reactive({});
+const verifying = reactive({});
+const verifyResults = reactive({});
 
 async function load(refresh = false) {
   loading.value = true;
@@ -70,6 +72,7 @@ async function toggle(t) {
     const next = !t.enabled;
     await post('/tools/toggle', { name: t.name, enabled: next });
     t.enabled = next;
+    delete verifyResults[t.name];
     toast(
       next
         ? `已开启 ${t.name}；重启 DSH 后它才会重新出现在工具里（桥接已放行）`
@@ -81,6 +84,20 @@ async function toggle(t) {
     toastError(e);
   } finally {
     busy[t.name] = false;
+  }
+}
+
+async function verify(t) {
+  if (verifying[t.name]) return;
+  verifying[t.name] = true;
+  try {
+    const r = await get(`/tools/verify?name=${encodeURIComponent(t.name)}`);
+    verifyResults[t.name] = r;
+    toast(r.verdict, r.needRestart ? 'warn' : 'ok', 7000);
+  } catch (e) {
+    toastError(e);
+  } finally {
+    verifying[t.name] = false;
   }
 }
 </script>
@@ -162,11 +179,24 @@ async function toggle(t) {
           <div style="flex: 1">
             <div class="muted small">{{ t.desc || '（没有描述）' }}</div>
             <div class="muted small" style="margin-top: 3px">{{ usageText(t) }}</div>
+            <div v-if="verifyResults[t.name]" class="small" style="margin-top: 4px">
+              <span :style="{ color: verifyResults[t.name].needRestart ? 'var(--warn)' : 'var(--ok)' }">
+                {{ verifyResults[t.name].verdict }}
+              </span>
+              <span v-if="verifyResults[t.name].needRestart" class="badge warn" style="margin-left: 6px">需重启 DSH</span>
+            </div>
           </div>
           <div class="row" style="gap: 4px">
             <span v-for="tag in t.tags" :key="tag" class="badge">{{ tag }}</span>
             <span v-if="t.shared > 1" class="badge">联动 {{ t.shared }}</span>
           </div>
+          <button
+            class="btn sm"
+            :disabled="verifying[t.name]"
+            @click="verify(t)"
+          >
+            {{ verifying[t.name] ? '验证中…' : '验证' }}
+          </button>
           <button
             class="btn sm"
             :class="t.enabled ? 'ghost' : 'primary'"

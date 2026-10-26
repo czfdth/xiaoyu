@@ -22,7 +22,8 @@ import {
 } from './data.mjs';
 import { actionList, runAction } from './actions.mjs';
 import { gatewayState, launchGateway } from './gateway.mjs';
-import { toolCatalog, setToolEnabled } from './tools.mjs';
+import { replaySecurity } from './security.mjs';
+import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -99,6 +100,10 @@ export async function buildApp({ guiDir }) {
   app.get('/api/memory/search', async (req) => memorySearch(req.query?.q ?? ''));
 
   app.get('/api/security/blocks', async (req) => securityBlocks(Number(req.query?.limit) || 200));
+  app.post('/api/security/replay', async (req) => replaySecurity({
+    text: req.body?.text,
+    knownToken: req.body?.knownToken === true,
+  }));
 
   app.get('/api/memory/:kind', async (req) => ({
     kind: req.params.kind,
@@ -153,6 +158,7 @@ export async function buildApp({ guiDir }) {
 
   app.get('/api/tools', async (req) => toolCatalog({ refresh: req.query?.refresh === '1' }));
   app.post('/api/tools/toggle', async (req) => setToolEnabled(req.body?.name, req.body?.enabled === true));
+  app.get('/api/tools/verify', async (req) => verifyTool(req.query?.name));
   app.get('/api/life', async () => lifeView());
   app.get('/api/life/chronicles', async () => ({ chronicles: chronicleList() }));
   app.get('/api/life/chronicles/:name', async (req) => readChronicle(req.params.name));

@@ -257,8 +257,43 @@ export async function toolCatalog({ refresh = false } = {}) {
   return data;
 }
 
-/** 单个工具的开关：写 config.socialV2.disabledTools，并让缓存失效。 */
-export async function setToolEnabled(name, enabled) {
+/** 验证一个工具“现在的实际效果”：配置是否放行、运行中的 MCP 是否还列出它。 */
+export async function verifyTool(name) {
+  if (!name) {
+    const error = new Error('缺少工具名');
+    error.statusCode = 400;
+    throw error;
+  }
+  const cfg = readConfig();
+  const disabledSet = new Set(Array.isArray(cfg.socialV2?.disabledTools) ? cfg.socialV2.disabledTools : []);
+  const flag = toolFlagMap()[name] || '';
+  const flagOff = Boolean(flag && cfg.socialV2?.tools?.[flag] === false);
+  const configuredEnabled = !disabledSet.has(name) && !flagOff;
+
+  const catalog = await toolCatalog();
+  let listedInMcp = false;
+  let source = '';
+  for (const group of catalog.groups || []) {
+    const hit = group.tools.find((t) => t.name === name);
+    if (hit) { listedInMcp = true; source = hit.source || ''; break; }
+  }
+
+  const needRestart = configuredEnabled !== listedInMcp;
+
+  let verdict;
+  if (configuredEnabled && listedInMcp) verdict = '已启用，MCP 列表里也有：可以直接用';
+  else if (configuredEnabled && !listedInMcp) verdict = '已启用，但 MCP 还没列出：重启 DSH 后才会出现';
+  else if (!configuredEnabled && listedInMcp) verdict = '已停用，桥接会立即拒绝；MCP 仍列出，重启 DSH 后消失';
+  else verdict = '已停用，MCP 里也已经没有了';
+
+  return {
+    name, configuredEnabled, listedInMcp, needRestart, verdict, source,
+    flag, flagOff, disabledByList: disabledSet.has(name),
+    checkedAt: Date.now(),
+  };
+}
+
+/** 单个工具的开关：写 config.socialV2.disabledTools，并让缓存失效。 */export async function setToolEnabled(name, enabled) {
   if (typeof enabled !== 'boolean') {
     const error = new Error('enabled 必须是布尔');
     error.statusCode = 400;
