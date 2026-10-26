@@ -1,0 +1,23 @@
+{
+  "name": "xiaoyu-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "小鱼管家 · 全栈控制台（Vue 3 + Vite 前端 / Fastify 后端）",
+  "scripts": {
+    "dev:api": "node server.mjs",
+    "dev:web": "vite --config web/vite.config.mjs",
+    "build": "vite build --config web/vite.config.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.7",
+    "fastify": "^5.12.7",
+    "vue": "^3.5.44",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "vite": "^8.3.5"
+  }
+}

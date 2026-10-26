@@ -1,0 +1,14 @@
+node_modules/
+gui/node_modules/
+state/
+logs/
+backups/
+images/
+audio/
+companion/
+config.json
+*.log
+*.zip
+pet/dsh-pet/
+pet/webm/
+.env
