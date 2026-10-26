@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            gui/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix gui ci
+
+      - name: Life and memory tests
+        run: npm run test:life
+
+      - name: Pairing E2E (fake OneBot, no real QQ)
+        run: npm run test:pairing-e2e
+
+      - name: Syntax check
+        run: |
+          node --check src/bridge.js
+          node --check src/mcp-snowluma-safe.js
+          node --check gui/server.mjs

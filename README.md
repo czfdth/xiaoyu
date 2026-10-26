@@ -4,6 +4,7 @@
 [![Downloads](https://img.shields.io/github/downloads/czfdth/xiaoyu/total?label=downloads)](https://github.com/czfdth/xiaoyu/releases)
 [![License](https://img.shields.io/github/license/czfdth/xiaoyu)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)](#)
+[![CI](https://github.com/czfdth/xiaoyu/actions/workflows/ci.yml/badge.svg)](https://github.com/czfdth/xiaoyu/actions/workflows/ci.yml)
 
 一个跑在自己电脑上的 AI 陪伴机器人：接 QQ，有声音、会画画、会唱歌、会写日记。
 
