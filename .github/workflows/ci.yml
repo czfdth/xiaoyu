@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -32,6 +32,10 @@ jobs:
       - name: Life and memory tests
         run: npm run test:life
 
+      - name: Show integration stage log
+        if: failure()
+        run: if (Test-Path stage.log) { Get-Content stage.log }
+
       - name: Pairing E2E (fake OneBot, no real QQ)
         run: npm run test:pairing-e2e
 
@@ -40,3 +44,4 @@ jobs:
           node --check src/bridge.js
           node --check src/mcp-snowluma-safe.js
           node --check gui/server.mjs
+

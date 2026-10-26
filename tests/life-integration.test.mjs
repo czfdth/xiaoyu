@@ -13,7 +13,8 @@ import { writeJson, readJson } from '../src/state-store.js';
 
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r,ms));
-const stage = (s) => console.error(`[stage] ${s} ${new Date().toISOString()}`);
+const stageFile = process.env.GITHUB_WORKSPACE ? path.join(process.env.GITHUB_WORKSPACE, 'stage.log') : path.join(os.tmpdir(), 'xiaoyu-stage.log');
+const stage = (s) => { try { fs.appendFileSync(stageFile, `${new Date().toISOString()} ${s}\n`); } catch {} };
 
 test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和重启', { timeout: 180000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaoyu-life-integration-'));
