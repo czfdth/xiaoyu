@@ -109,6 +109,93 @@ function stageInfo(days) {
   return { current, next, progress, daysToNext: next ? next.min - days : 0 };
 }
 
+// 往后的日子：按真实时间走，不设终点。日期按日历算，不按固定 365 天漂。
+const LIFE_MILESTONES = [
+  { key: 'first-day', name: '第一天', at: (b) => b },
+  { key: 'first-week', name: '第一周', at: (b) => addDays(b, 7) },
+  { key: 'first-month', name: '第一个月', at: (b) => addMonths(b, 1) },
+  { key: 'hundredth-day', name: '第一百天', at: (b) => addDays(b, 99) },
+  { key: 'year-1', name: '一岁', at: (b) => addYears(b, 1) },
+  { key: 'year-2', name: '两岁', at: (b) => addYears(b, 2) },
+  { key: 'year-3', name: '三岁', at: (b) => addYears(b, 3) },
+  { key: 'year-5', name: '五岁', at: (b) => addYears(b, 5) },
+  { key: 'year-10', name: '十岁', at: (b) => addYears(b, 10) },
+  { key: 'year-20', name: '二十岁', at: (b) => addYears(b, 20) },
+  { key: 'year-30', name: '三十岁', at: (b) => addYears(b, 30) },
+  { key: 'year-50', name: '五十岁', at: (b) => addYears(b, 50) },
+];
+
+function addDays(ms, n) {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
+function addMonths(ms, n) {
+  const d = new Date(ms);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + n);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return d.getTime();
+}
+
+function addYears(ms, n) {
+  const d = new Date(ms);
+  d.setDate(1);
+  d.setFullYear(d.getFullYear() + n);
+  d.setMonth(new Date(ms).getMonth());
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(new Date(ms).getDate(), last));
+  return d.getTime();
+}
+
+function futureMilestones(birthMs) {
+  const today = startOfDay(Date.now());
+  const items = LIFE_MILESTONES.map((m) => {
+    const at = m.at(birthMs);
+    return {
+      key: m.key,
+      name: m.name,
+      date: dayOf(at),
+      reached: startOfDay(at) <= today,
+      daysLeft: Math.max(0, Math.round((startOfDay(at) - today) / DAY)),
+    };
+  });
+  return { items, next: items.find((m) => !m.reached) || null };
+}
+
+function ageParts(birthMs, nowMs) {
+  const b = new Date(birthMs);
+  const n = new Date(nowMs);
+  let years = n.getFullYear() - b.getFullYear();
+  let months = n.getMonth() - b.getMonth();
+  let days = n.getDate() - b.getDate();
+  if (days < 0) {
+    months -= 1;
+    days += new Date(n.getFullYear(), n.getMonth(), 0).getDate();
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  years = Math.max(0, years);
+  months = Math.max(0, months);
+  days = Math.max(0, days);
+  return { years, months, days, text: `${years} 岁 ${months} 个月 ${days} 天` };
+}
+
+function nextBirthdayInfo(birthMs, nowMs) {
+  const b = new Date(birthMs);
+  const n = new Date(nowMs);
+  const today = startOfDay(nowMs);
+  let next = new Date(n.getFullYear(), b.getMonth(), b.getDate());
+  if (startOfDay(next.getTime()) <= today) next = new Date(n.getFullYear() + 1, b.getMonth(), b.getDate());
+  const daysLeft = Math.max(0, Math.round((startOfDay(next.getTime()) - today) / DAY));
+  return { date: dayOf(next.getTime()), daysLeft, ageAt: next.getFullYear() - b.getFullYear() };
+}
+
 /** 她的一天：从计划任务清单里找每天固定时间的条目。 */
 function scheduleView() {
   const manifest = readJson(path.join(APP_ROOT, 'scripts', 'tasks.manifest.json'), { tasks: [] });
@@ -220,10 +307,18 @@ export function lifeView() {
   const project = (projects.items || [])[0] || null;
   const works = worksView();
   const schedule = scheduleView();
+  const nowMs = Date.now();
+  const future = futureMilestones(birthMs);
 
   return {
     birth: life.birth,
     days,
+    future: {
+      age: ageParts(birthMs, nowMs),
+      birthday: nextBirthdayInfo(birthMs, nowMs),
+      next: future.next,
+      items: future.items,
+    },
     stage: {
       id: stage.current.id,
       name: stage.current.name,

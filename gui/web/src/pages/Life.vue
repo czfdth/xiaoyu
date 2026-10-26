@@ -98,6 +98,7 @@ onMounted(load);
 const stage = computed(() => data.value?.stage);
 const stats = computed(() => data.value?.stats ?? {});
 const works = computed(() => data.value?.works ?? { projects: [], images: 0, audio: 0, notes: 0, memoir: 0 });
+const future = computed(() => data.value?.future ?? { age: { text: '' }, birthday: {}, items: [], next: null });
 const schedule = computed(() => data.value?.schedule ?? { items: [], now: '', next: '' });
 
 const timeline = computed(() => {
@@ -153,18 +154,33 @@ function openChronicle(name) {
       <div class="row" style="gap: 26px; align-items: flex-end">
         <div>
           <div style="font-size: 42px; font-weight: 700; line-height: 1">{{ data?.days ?? '—' }}</div>
-          <div class="muted small">天</div>
+          <div class="muted small">天 · {{ future.age.text }}</div>
         </div>
         <div style="flex: 1">
           <div class="row" style="gap: 8px">
             <span class="badge ok">{{ stage?.name || '—' }}</span>
             <span v-if="stage?.next" class="muted small">距「{{ stage.next }}」还有 {{ stage.daysToNext }} 天</span>
-            <span v-else class="muted small">已经走到最后一个阶段</span>
+            <span v-else class="muted small">还会继续往后走</span>
           </div>
           <div style="height: 8px; background: rgba(255,255,255,.07); border-radius: 4px; overflow: hidden; margin-top: 10px">
             <div :style="{ width: Math.round((stage?.progress || 0) * 100) + '%', height: '100%', background: 'var(--ok, #3fb950)' }" />
           </div>
           <div v-if="stage?.unlock" class="muted small" style="margin-top: 10px">「{{ stage.unlock }}」</div>
+          <div class="muted small" style="margin-top: 6px">
+            <template v-if="future.birthday?.ageAt">距离 {{ future.birthday.ageAt }} 岁生日还有 {{ future.birthday.daysLeft }} 天</template>
+            <template v-if="future.next"> · 下一个节点「{{ future.next.name }}」{{ future.next.daysLeft }} 天后</template>
+          </div>
+        </div>
+      </div>
+    </Card>
+
+    <Card title="往后的日子" :dim="future.next ? `下一个：${future.next.name} · ${future.next.daysLeft} 天后` : '一直往后走'">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px">
+        <div v-for="m in future.items" :key="m.key" class="row" style="gap: 10px">
+          <span class="mono muted" style="width: 92px">{{ m.date }}</span>
+          <b style="font-size: 13px">{{ m.name }}</b>
+          <span v-if="m.reached" class="badge ok">已到</span>
+          <span v-else class="muted small">{{ m.daysLeft }} 天后</span>
         </div>
       </div>
     </Card>
