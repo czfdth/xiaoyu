@@ -53,13 +53,14 @@ test('真 bridge + 真 MCP + 假 QQ：归属、履约、进度、失败发送和
   fs.mkdirSync(path.join(root,'images'),{recursive:true});
   fs.writeFileSync(path.join(root,'images/fish.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII=','base64'));
   const api=async(route,body,agentToken)=>{
-    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{})});
+    const r=await fetch(base+route,{method:body?'POST':'GET',headers:{...headers,...(agentToken?{'x-agent-token':agentToken}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(3000)});
     return {status:r.status,data:await r.json()};
   };
   const start=async()=>{
     bridge=spawn(process.execPath,['src/bridge.js'],{cwd:code,env,stdio:['ignore','pipe','pipe']});
     bridge.stdout.on('data',d=>output+=d);bridge.stderr.on('data',d=>output+=d);
     for(let i=0;i<100;i++) {
+      if (i % 10 === 0) stage('start-attempt-' + i);
       try { if((await api('/api/status')).status===200) { await api('/api/mode',{mode:'reserved2'}); return; } } catch {}
       if(bridge.exitCode!==null)throw new Error(output.slice(-3000));
       await sleep(100);
