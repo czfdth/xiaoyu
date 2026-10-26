@@ -1,5 +1,6 @@
 // 作品集：图库/语音的文件清单与安全读取。
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { APP_ROOT } from '../../src/paths.js';
 
@@ -91,4 +92,56 @@ export function audioPath(name) {
   const full = safePath(AUDIO, name);
   if (!full) { const error = new Error('语音不存在'); error.statusCode = 404; throw error; }
   return { file: full };
+}
+
+// 便签：她用 qq_pc_save_note 写在桌面的「小鱼写的」文件夹里。
+// 桌面可能被 OneDrive 重定向，所以几个常见位置都查一遍。
+const NOTE_RE = /\.(txt|md)$/i;
+
+function noteDirs() {
+  const home = process.env.USERPROFILE || os.homedir();
+  return [
+    path.join(home, 'Desktop', '小鱼写的'),
+    path.join(home, 'OneDrive', 'Desktop', '小鱼写的'),
+    path.join(home, 'OneDrive', '桌面', '小鱼写的'),
+  ];
+}
+
+function noteMeta(file, name) {
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''); } catch {}
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const title = lines[0] || name.replace(NOTE_RE, '');
+  const preview = lines.slice(1, 4).join(' / ').slice(0, 160);
+  const stat = fs.statSync(file);
+  return { name, title: title.slice(0, 80), preview, size: stat.size, at: stat.mtimeMs };
+}
+
+/** 桌面「小鱼写的」便签清单，按修改时间倒序。 */
+export function listNotes({ limit = 100, offset = 0 } = {}) {
+  const seen = new Set();
+  const all = [];
+  for (const dir of noteDirs()) {
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((name) => NOTE_RE.test(name)); } catch { continue; }
+    for (const name of names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      try { all.push(noteMeta(path.join(dir, name), name)); } catch {}
+    }
+  }
+  all.sort((a, b) => b.at - a.at);
+  return { total: all.length, files: all.slice(offset, offset + Math.max(0, Math.min(200, limit || 100))) };
+}
+
+export function notePath(name) {
+  const safe = path.basename(String(name || ''));
+  if (!safe || !NOTE_RE.test(safe) || safe !== String(name).replace(/\\/g, '')) {
+    const error = new Error('便签不存在'); error.statusCode = 404; throw error;
+  }
+  for (const dir of noteDirs()) {
+    const full = path.join(dir, safe);
+    if (fs.existsSync(full) && fs.statSync(full).isFile()) return { file: full, type: 'text/plain; charset=utf-8' };
+  }
+  const error = new Error('便签不存在'); error.statusCode = 404; throw error;
 }

@@ -17,6 +17,46 @@ const galleryOpen = ref(false);
 const galleryImages = ref([]);
 const galleryTotal = ref(0);
 const galleryLoading = ref(false);
+const notesOpen = ref(false);
+const notes = ref([]);
+const notesTotal = ref(0);
+const notesLoading = ref(false);
+const noteTitle = ref('');
+const noteText = ref('');
+const noteBusy = ref(false);
+
+async function openNotes() {
+  if (notesLoading.value) return;
+  notesLoading.value = true;
+  notesOpen.value = true;
+  noteText.value = '';
+  noteTitle.value = '';
+  try {
+    const r = await get('/works/notes?limit=200');
+    notes.value = r.files || [];
+    notesTotal.value = r.total || 0;
+    if (notes.value.length) await readNote(notes.value[0].name);
+  } catch (e) {
+    toastError(e);
+  } finally {
+    notesLoading.value = false;
+  }
+}
+
+async function readNote(name) {
+  noteBusy.value = true;
+  noteTitle.value = name;
+  try {
+    const r = await fetch(`/api/works/note/${encodeURIComponent(name)}`);
+    if (!r.ok) throw new Error('便签读取失败');
+    noteText.value = await r.text();
+  } catch (e) {
+    toastError(e);
+    noteText.value = '';
+  } finally {
+    noteBusy.value = false;
+  }
+}
 
 async function openGallery(more = false) {
   if (galleryLoading.value) return;
@@ -57,7 +97,7 @@ onMounted(load);
 
 const stage = computed(() => data.value?.stage);
 const stats = computed(() => data.value?.stats ?? {});
-const works = computed(() => data.value?.works ?? { projects: [], images: 0, audio: 0, memoir: 0 });
+const works = computed(() => data.value?.works ?? { projects: [], images: 0, audio: 0, notes: 0, memoir: 0 });
 const schedule = computed(() => data.value?.schedule ?? { items: [], now: '', next: '' });
 
 const timeline = computed(() => {
@@ -163,8 +203,9 @@ function openChronicle(name) {
       </Card>
     </div>
 
-    <Card title="作品集" :dim="`画 ${works.images} · 语音 ${works.audio} · 回忆录 ${works.memoir}`">
+    <Card title="作品集" :dim="`画 ${works.images} · 语音 ${works.audio} · 便签 ${works.notes} · 回忆录 ${works.memoir}`">
       <template #actions>
+        <button class="btn sm" @click="openNotes">看她写的便签</button>
         <button class="btn sm" @click="openGallery(false)">看全部画</button>
       </template>
       <div v-if="!works.projects?.length" class="muted small">还没有长期项目。</div>
@@ -231,6 +272,33 @@ function openChronicle(name) {
       <pre class="pre" style="max-height: 60vh; white-space: pre-wrap">{{ chText }}</pre>
       <template #footer>
         <button class="btn" @click="chOpen = false">关闭</button>
+      </template>
+    </Modal>
+
+    <Modal :open="notesOpen" :title="`她写的便签 · 共 ${notesTotal} 张`" @update:open="notesOpen = $event">
+      <div class="row" style="gap: 14px; align-items: flex-start">
+        <div style="width: 230px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 6px">
+          <button
+            v-for="n in notes"
+            :key="n.name"
+            class="btn sm ghost"
+            style="text-align: left"
+            :style="noteTitle === n.name ? 'border-color: var(--accent, #4fd1c5)' : ''"
+            @click="readNote(n.name)"
+          >
+            <div><b>{{ n.title }}</b></div>
+            <div class="muted small">{{ new Date(n.at).toLocaleString() }}</div>
+          </button>
+          <div v-if="!notesLoading && !notes.length" class="muted small">桌面「小鱼写的」里还没有便签。</div>
+        </div>
+        <div style="flex: 1; min-width: 0; max-height: 60vh; overflow: auto">
+          <div v-if="notesLoading || noteBusy" class="muted small">读取中…</div>
+          <pre v-else class="small" style="white-space: pre-wrap; margin: 0; font-family: inherit">{{ noteText }}</pre>
+        </div>
+      </div>
+      <template #footer>
+        <span class="muted small">共 {{ notesTotal }} 张</span>
+        <button class="btn" @click="notesOpen = false">关闭</button>
       </template>
     </Modal>
 

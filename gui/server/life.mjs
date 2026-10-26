@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { APP_ROOT, STATE_DIR } from '../../src/paths.js';
+import { listNotes } from './works.mjs';
 
 const DAY = 86_400_000;
 const LIFE_FILE = path.join(STATE_DIR, 'life.json');
@@ -137,6 +138,7 @@ function worksView() {
   return {
     images,
     audio,
+    notes: listNotes({ limit: 1 }).total,
     memoir,
     projects: (projects.items || []).map((p) => ({
       id: p.id, title: p.title, kind: p.kind, done: p.done ?? 0, total: p.total ?? 0, note: p.note || '', updatedAt: p.updatedAt || 0,

@@ -23,7 +23,7 @@ import { actionList, runAction } from './actions.mjs';
 import { gatewayState, launchGateway } from './gateway.mjs';
 import { toolCatalog, setToolEnabled } from './tools.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
-import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage } from './works.mjs';
+import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
 import { desktopPetStatus, startDesktopPet, stopDesktopPet } from './desktoppet.mjs';
 
@@ -151,9 +151,14 @@ export async function buildApp({ guiDir }) {
   app.get('/api/life/chronicles/:name', async (req) => readChronicle(req.params.name));
   app.post('/api/life/chronicle', async (req) => generateChronicle({ days: req.body?.days }));
 
-  // 作品集：图库/语音
+  // 作品集：图库/语音/便签
   app.get('/api/works/images', async (req) => listImages({ limit: Number(req.query?.limit) || 60, offset: Number(req.query?.offset) || 0 }));
   app.get('/api/works/decor', async () => decorImages({ limit: 4 }));
+  app.get('/api/works/notes', async (req) => listNotes({ limit: Number(req.query?.limit) || 100, offset: Number(req.query?.offset) || 0 }));
+  app.get('/api/works/note/:name', async (req, reply) => {
+    const { file, type } = notePath(req.params.name);
+    return reply.type(type).send(fs.createReadStream(file));
+  });
 
   // 她的动作（dsh-pet 素材）
   app.get('/api/pet/actions', async () => listActions());
