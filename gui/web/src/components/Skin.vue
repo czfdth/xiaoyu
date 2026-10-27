@@ -9,7 +9,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 const KEY = 'xiaoyu.skin';
-const DEFAULTS = { enabled: false, veil: 0.28, boot: true };
+const DEFAULTS = { enabled: true, veil: 0.14, boot: true };
 
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; }
@@ -158,13 +158,15 @@ onUnmounted(() => {
 /* 开皮肤后，面板改成半透明毛玻璃，让背景透出来 */
 body.skin-on .card,
 body.skin-on .panel {
-  background: rgba(16, 22, 30, .62) !important;
+  background: rgba(21, 21, 23, .55) !important;
   backdrop-filter: blur(14px) saturate(1.1);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   border-color: rgba(120, 160, 200, .18) !important;
 }
 body.skin-on .nav-item.active { background: rgba(79, 209, 197, .16) !important; }
 body.skin-on .main { background: transparent !important; }
+body.skin-on .sidebar { background: rgba(27, 27, 28, .48) !important; backdrop-filter: blur(12px); }
+body.skin-on .card { border-radius: 16px; }
 
 .boot-layer {
   position: fixed; inset: 0; z-index: 90; background: #05070a;
@@ -183,7 +185,7 @@ body.skin-on .main { background: transparent !important; }
   position: fixed; right: 18px; bottom: 18px; z-index: 70;
   width: 38px; height: 38px; border-radius: 50%;
   border: 1px solid rgba(120, 160, 200, .3);
-  background: rgba(12, 18, 26, .72); color: #8fb7d8;
+  background: rgba(21, 21, 23, .78); color: #8fb7d8;
   font-size: 15px; cursor: pointer; backdrop-filter: blur(8px);
 }
 .skin-fab.on { color: #4fd1c5; border-color: rgba(79, 209, 197, .5); }
@@ -191,7 +193,7 @@ body.skin-on .main { background: transparent !important; }
   position: fixed; right: 18px; bottom: 66px; z-index: 71; width: 260px;
   padding: 14px; border-radius: 14px;
   border: 1px solid rgba(120, 160, 200, .22);
-  background: rgba(12, 18, 26, .92); backdrop-filter: blur(16px);
+  background: rgba(21, 21, 23, .96); backdrop-filter: blur(16px);
   box-shadow: 0 18px 48px rgba(0, 0, 0, .45);
 }
 .skin-panel input[type="range"] { width: 100%; }
