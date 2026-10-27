@@ -109,10 +109,12 @@ export function bucketActivity(messages, { now = Date.now(), hours = 24 } = {}) 
   const endHour = Math.floor(now / hourMs) * hourMs;
   const startHour = endHour - (span - 1) * hourMs;
   const buckets = [];
+  // 小时标签固定按北京时间（+08，无夏令时），不能用 getHours()：
+  // 那会跟着运行机器的时区变，CI 是 UTC，柱状图就会整体错位（本地过、CI 挂过一次）。
+  const hourFmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false });
   for (let i = 0; i < span; i += 1) {
     const at = startHour + i * hourMs;
-    const d = new Date(at);
-    buckets.push({ at, hour: `${String(d.getHours()).padStart(2, '0')}:00`, her: 0, other: 0 });
+    buckets.push({ at, hour: `${hourFmt.format(new Date(at))}:00`, her: 0, other: 0 });
   }
   let herCount = 0;
   let otherCount = 0;
