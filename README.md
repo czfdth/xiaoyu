@@ -38,7 +38,15 @@ node src/paths.js --init
 npm run test:life
 ```
 
-`test:life` 包含 90 项测试，覆盖记忆归属、承诺证据、事件分层、画册分步执行，以及真实 bridge/MCP 接本地假 QQ 的集成测试。测试不需要真实 QQ 登录或模型 API key，也不会向真实 QQ 发消息。
+`test:life` 覆盖记忆归属、承诺证据、事件分层、画册分步执行、上下文预算，以及真实 bridge/MCP 接本地假 QQ 的集成测试。
+测试不需要真实 QQ 登录或模型 API key，也不会向真实 QQ 发消息。
+
+那条真实 bridge/MCP 集成测试（`tests/agency-integration.test.mjs`）要 spawn 两次 bridge 再连 MCP，
+在 GitHub Actions 的共享 runner 上会挂死（本地 ≤3 秒），所以 CI 里按环境跳过；想跑它：
+
+```powershell
+npm run test:integration      # = XIAOYU_IT=1 node --test tests/agency-integration.test.mjs
+```
 
 绘图、语音和 QQ 的真实运行仍需安装、配置对应外部服务。通过自动化测试不等于绘图服务可用，也不证明模型会稳定执行或正确评价作品。
 
