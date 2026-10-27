@@ -1,3 +1,16 @@
+
+/**
+ * 各接口返回的形状。给编辑器用的（配合 // @ts-check），运行时以 CONTRACT 为准。
+ *
+ * @typedef {{enabled: boolean, veil: number, boot: boolean, sound: boolean}} SkinView
+ * @typedef {{day: string, tokens: number, proactive: number, limits: {dailyTokens: number, proactivePerDay: number}, blocked: boolean, reason: string}} BudgetView
+ * @typedef {{enabled: boolean, port: number, allowWrite: boolean, hasPassword: boolean, lan: string[], minPassword: number}} RemoteView
+ * @typedef {{generatedAt: number, gauges: string[], now: {body: object, mood: object, inner: object, ages: object}, series: Array<object>, activity: Array<{hour: string, her: number, other: number}>, stats: object}} VitalsView
+ * @typedef {{generatedAt: number, entities: Array<{name: string, type: string, aliases: string[], facts: number}>, totals: {facts: number, stale: number, entities: number, nodes: number, edges: number}, network: {width: number, height: number, nodes: Array<object>, edges: Array<object>}, facts: Array<object>}} KgView
+ * @typedef {{disk: object, keys: {ok: boolean, plaintextFiles: string[], logLeaks: Array<object>, warnings: string[]}, drill: object|null, index: object|null}} OpsView
+ * @typedef {{root: string, ports: object, capabilities: object, gateway: object, dsh: object, alerts: Array<{level: string, text: string, action?: string}>, her: object, counts: object, journal: object, now: number}} Overview
+ */
+
 // 接口契约：一份声明式 schema，服务端用它校验请求，测试用它验返回。
 //
 // 现状是"接口靠约定"：后端返回什么、前端以为是什么，全靠人记。字段一改，
