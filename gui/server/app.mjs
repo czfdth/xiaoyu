@@ -338,7 +338,6 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
     prefix: '/',
     wildcard: false,
     index: ['index.html'],
-    },
   });
 
   app.setNotFoundHandler((req, reply) => {
