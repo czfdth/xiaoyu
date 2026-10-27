@@ -824,7 +824,9 @@ function loadConfig() {
         setStickerRemark: false,
         stickerNote: true,
         collectSticker: true,
-        getSelfImage: true
+        getSelfImage: true,
+        // 叫别的 agent 干活：默认关（花别的账号额度，且对方能读写本机）
+        askAgent: false
       },
       wake: {
         defaultMode: 'diving',
@@ -982,6 +984,7 @@ function loadConfig() {
     stickerNote: true,
     collectSticker: true,
     getSelfImage: true,
+    askAgent: false,
     sendVoice: false,
     ...(cfg.socialV2.tools ?? {})
   };

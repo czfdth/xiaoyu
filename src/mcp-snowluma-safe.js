@@ -1,4 +1,5 @@
 import { situationView, contextualContinuity, executeSituationSend } from './situation.js';
+import { askAgent } from './agent-delegate.js';
 // 安全版 QQ MCP server（stdio）。由 DSH 的 MCP 客户端 spawn。
 //
 // 安全设计：
@@ -424,6 +425,7 @@ const TOOL_CONFIG_FLAGS = {
   // token 才改注册期过滤的），又诱导模型误调。`qq_set_sticker_remark` 默认就是 `false`
   // （见 bridge.js 的 socialV2.tools 默认表），所以此前它一直是"默认关闭却仍然可见"。
   qq_send_poke: 'sendPoke',
+  qq_ask_agent: 'askAgent',
   qq_get_message_images: 'getImages',
   qq_get_forward_msg: 'getForwardMsg',
   qq_list_stickers: 'listStickers',
@@ -489,6 +491,53 @@ function toolDisabledNow(name) {
     return registerTool(name, ...rest);
   };
 }
+
+// ── 叫别的 agent 干活（默认关闭，只在管理员私聊里可用）──────────────────────
+//
+// 为什么默认关闭：它花的是**另一个**账号/订阅的额度，而且对方是编码 agent —— 能读文件、能跑命令。
+// 群里任何人只要能影响她，就能借它去动本机的东西，所以这里只认管理员私聊，并且要显式打开
+// `socialV2.tools.askAgent` 才会注册（不打开时连工具描述都不发，不占上下文）。
+server.tool(
+  'qq_ask_agent',
+  '把一件具体的活交给本机上的另一个 agent（OpenCode / Codex CLI）去做，拿回它的回答。'
+  + '只在管理员私聊里可用，且默认关闭。适合“让会写代码的那位算/写一段”，不适合闲聊；'
+  + '它看不到你们的聊天记录，也不会用你的 QQ 工具，所以 prompt 要写清背景。'
+  + '耗时可能几十秒到几分钟，超时会失败。',
+  {
+    key: z.string().describe('会话 key，必须是管理员私聊：private:主人QQ'),
+    prompt: z.string().describe('交给它的完整任务说明（不会带上下文，要写全）'),
+    agent: z.enum(['opencode', 'codex']).optional().describe('用哪个 agent，默认 opencode'),
+    model: z.string().optional().describe('指定模型，形如 openai/gpt-5.5-fast；不填用它自己的默认'),
+    timeoutSec: z.number().optional().describe('超时秒数，默认 120，范围 10~600'),
+  },
+  async ({ key, prompt, agent = 'opencode', model = '', timeoutSec }) => {
+    const ownerKey = `private:${cfg.ownerQQ}`;
+    // 先判身份再判别的：别人的私聊/群聊一律不给用，哪怕工具被误开了。
+    if (!cfg.ownerQQ || String(key ?? '') !== ownerKey) {
+      return { content: [{ type: 'text', text: 'qq_ask_agent 只在管理员私聊里可用' }], isError: true };
+    }
+    if (cfg.socialV2?.tools?.askAgent !== true) {
+      return { content: [{ type: 'text', text: 'qq_ask_agent 默认关闭；在 config.json 的 socialV2.tools.askAgent 打开并重启 DSH' }], isError: true };
+    }
+    const result = await askAgent({
+      agent,
+      prompt,
+      model,
+      timeoutMs: (Number(timeoutSec) || 120) * 1000,
+      cwd: ROOT,
+      cfg,
+    });
+    if (!result.ok) {
+      return { content: [{ type: 'text', text: `叫 ${agent} 失败：${result.error}` }], isError: true };
+    }
+    return {
+      content: [{
+        type: 'text',
+        text: `【${agent}${result.model ? ` · ${result.model}` : ''}｜${Math.round((result.ms ?? 0) / 1000)}s】\n${result.text}`,
+      }],
+    };
+  }
+);
 
 server.tool(
   'qq_status',

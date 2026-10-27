@@ -31,6 +31,7 @@ const GROUP_ORDER = [
   ['read', '看消息 / 等待'],
   ['media', '表情、图片、语音'],
   ['create', '画图、唱歌、动图'],
+  ['agent', '叫别的 agent'],
   ['memory', '记忆与自我'],
   ['time', '时间、提醒、天气'],
   ['qzone', 'QQ 空间'],
@@ -40,6 +41,7 @@ const GROUP_ORDER = [
 ];
 
 function groupOf(name) {
+  if (/^qq_ask_agent$/.test(name)) return 'agent';
   if (/^qq_pc_/.test(name)) return 'pc';
   if (/^qq_qzone_/.test(name)) return 'qzone';
   if (/^qq_draw$|^qq_anim$|^qq_sketch$|^qq_sing$|^qq_music_|^qq_bili$/.test(name)) return 'create';
@@ -56,6 +58,7 @@ function groupOf(name) {
 function tagsFor(name, caps) {
   const tags = [];
   if (/^qq_pc_/.test(name)) tags.push('仅主人私聊');
+  if (/^qq_ask_agent$/.test(name)) tags.push('默认关闭', '花别人的额度');
   if (/^qq_(draw|anim)$/.test(name)) tags.push(caps.draw ? '画图已装' : '需要 ComfyUI');
   if (/^qq_(sing|music_)/.test(name)) tags.push(caps.sing ? '唱歌已装' : '需要 RVC');
   if (/^qq_(say|send_voice|list_voices)$/.test(name)) tags.push(caps.voice ? '声音已装' : '需要 GPT-SoVITS');
