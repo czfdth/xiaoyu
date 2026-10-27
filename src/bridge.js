@@ -13615,7 +13615,76 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   // SnowLuma 1.14.17 起新增 bot_status（账号会话边沿）。老运行时不会发这个事件，
   // 所以它只是加分项：收到就记下来，收不到不影响其它判断。
   try {
-    bot.onBotStatus((event) => {
+  
+  /**
+   * 断线补偿：重连后拉一次历史消息，把断开期间错过的补进未读。
+   *
+   * 为什么需要：网关一断，OneBot 不会把离线期间的消息重放给客户端——
+   * 那些消息就这样消失了，她永远不知道有人找过她（19:42 那次断线就是这样）。
+   * 这里用 get_*_msg_history 拉最近几十条，按 lastIncomingAt 过滤后补进未读。
+   */
+  let catchUpRunning = false;
+  async function catchUpMissed() {
+    if (catchUpRunning) return;
+    catchUpRunning = true;
+    try {
+      const now = Date.now();
+      let filled = 0;
+      for (const key of socialV2.conversations.keys()) {
+        if (!isSessionAllowedInCurrentMode(key)) continue;
+        const st = getSocialV2State(key);
+        const since = Number(st?.lastIncomingAt) || 0;
+        // 只补"确实断过"的：最近 30 分钟内有过消息、且最后一条早于 60 秒前
+        if (!since || now - since < 60_000) continue;
+        const [kind, id] = String(key).split(':');
+        let rows = [];
+        try {
+          const action = kind === 'group' ? 'get_group_msg_history' : 'get_friend_msg_history';
+          const params = kind === 'group' ? { group_id: Number(id), count: 30 } : { user_id: Number(id), count: 30 };
+          const resp = await bot.request(action, params);
+          rows = resp?.data?.messages ?? resp?.messages ?? [];
+        } catch (error) {
+          log('断线补偿：拉历史失败（' + key + '）' + (error?.message ?? error));
+          continue;
+        }
+        if (!Array.isArray(rows) || !rows.length) continue;
+        let added = 0;
+        for (const row of rows) {
+          const at = Number(row?.time) * 1000;
+          if (!Number.isFinite(at) || at <= since) continue;
+          const text = Array.isArray(row?.message)
+            ? row.message.filter((seg) => seg?.type === 'text').map((seg) => String(seg?.data?.text ?? '')).join('')
+            : String(row?.raw_message ?? row?.message ?? '').trim();
+          if (!text) continue;
+          const senderId = row?.sender?.user_id ?? row?.user_id;
+          const isOwner = Number(senderId) === Number(cfg.ownerQQ);
+          appendSocialV2Message(
+            key,
+            kind === 'group' ? (row?.sender?.card || row?.sender?.nickname || String(senderId)) : '私聊',
+            text, text, false, isOwner,
+            row?.message_id ?? row?.msg_id ?? null, [], senderId ?? null, [],
+          );
+          st.lastIncomingAt = Math.max(Number(st.lastIncomingAt) || 0, at);
+          added += 1;
+        }
+        if (added) {
+          filled += added;
+          appendActivity(key + ' 断线补偿：补回 ' + added + ' 条');
+          log('断线补偿：' + key + ' 补回 ' + added + ' 条');
+        }
+      }
+      if (filled) {
+        saveSocialV2State();
+        log('断线补偿完成：共 ' + filled + ' 条');
+      }
+    } catch (error) {
+      log('断线补偿失败：' + (error?.message ?? error));
+    } finally {
+      catchUpRunning = false;
+    }
+  }
+
+  bot.onBotStatus((event) => {
       noteUpstreamPacket('notice/bot_status');
       const sub = String(event?.sub_type ?? '');
       snowlumaHealth.accountOnline = sub === 'online';
@@ -13634,6 +13703,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 用实际连接地址（自愈后可能与 config 里的初值不同，别打印过期的那个）
     const connectedUrl = bot.url ?? cfg.snowluma.wsUrl;
     snowlumaHealth.connected = true;
+        setTimeout(() => { void catchUpMissed(); }, 8000);
     log(`SnowLuma 已连接：${connectedUrl}`);
     // 「已连接」只说明与 SnowLuma 的 WebSocket 通了，**不说明 QQ 侧收得到消息** ——
     // 这个区别见 startSnowlumaWatch 的说明。这里顺手把上游健康快照刷一次。
