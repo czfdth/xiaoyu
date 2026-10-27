@@ -1,9 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {preSleepGuidance} from '../src/wake-guidance.js';
+import {preSleepGuidance, staleSelfStateHint} from '../src/wake-guidance.js';
 import {buildStickerStrategyHint,buildCompactStickerStrategyHint,buildStickerContext} from '../src/sticker-lib.js';
 import {projectHint} from '../src/project-workflow.js';
 import {commitmentHint} from '../src/commitments.js';
+
+test('身体/内心/心情太久没更新时提醒她先更新，全都新鲜就不打扰',()=>{
+  const H = 3600 * 1000;
+  const fresh = staleSelfStateHint({ body: 1 * H, inner: 2 * H, mood: 3 * H });
+  assert.equal(fresh, '', '三份都新鲜就不加提示');
+
+  const stale = staleSelfStateHint({ body: 8 * H, inner: 17 * H, mood: 1 * H });
+  assert.match(stale, /身体/); assert.match(stale, /qq_body/);
+  assert.match(stale, /内心/); assert.match(stale, /qq_inner_state/);
+  assert.match(stale, /8 小时前/);
+  assert.doesNotMatch(stale, /心情/, '心情是新的，不该提');
+  assert.match(stale, /先更新你自己/);
+
+  // 文件不存在 = 从来没记过，更该提醒
+  const missing = staleSelfStateHint({});
+  assert.match(missing, /还没记过/);
+
+  // 边界：刚好 6 小时不算过期（> 才算）
+  assert.equal(staleSelfStateHint({ body: 6 * H, inner: 6 * H, mood: 6 * H }), '');
+  assert.match(staleSelfStateHint({ body: 6 * H + 1, inner: 1 * H, mood: 1 * H }), /身体/);
+});
 
 test('关闭沉睡等待时，唤醒和默认收尾不再矛盾；标记已读与唤醒配置保留',()=>{
  const v=preSleepGuidance({preSleepWaitEnabled:false,preSleepWaitMs:60000});

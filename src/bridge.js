@@ -1,4 +1,4 @@
-import { preSleepGuidance } from './wake-guidance.js';
+import { preSleepGuidance, staleSelfStateHint } from './wake-guidance.js';
 import { readJson as readAtomicJson } from './state-store.js';
 import { agencyView, changeAgency, assertAgencyMutation, reserveAgencyWake, finishAgencyWake, agencyHint } from './agency.js';
 import { situationView, contextualContinuity, executeSituationSend, observeSituation, situationHint, wakeSituationDecision } from './situation.js';
@@ -11397,6 +11397,18 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     return `【你的身份】你在 QQ 上的昵称是${label}${idText}。${callBits}；群名片可能与昵称不同，at/引用段里带${id ? ` ${id} ` : '你的 QQ 号'}就是在叫你。\n\n`;
   }
 
+  /**
+   * 她的身体/内心/心情太久没更新时，在唤醒提示里催她先更新（不催就是下午三点还说"刚醒"）。
+   * 只读文件 mtime，不解析内容；拿不到 mtime 就当作"还没记过"。
+   */
+  function staleSelfStateLine() {
+    const ages = {};
+    for (const [field, file] of [['body', STATE_FILES.body], ['inner', STATE_FILES.inner], ['mood', STATE_FILES.mood]]) {
+      try { ages[field] = Date.now() - fs.statSync(file).mtimeMs; } catch { ages[field] = undefined; }
+    }
+    return staleSelfStateHint(ages, Number(cfg.socialV2?.context?.selfStateStaleHours) || 6);
+  }
+
   function buildWakePromptV2(key, reason) {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
@@ -11458,7 +11470,8 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
-    const base = realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + timeSenseLine;
+    const staleStateLine = staleSelfStateLine();
+    const base = realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
