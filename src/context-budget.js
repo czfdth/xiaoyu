@@ -14,7 +14,7 @@ export const CONTEXT_BUDGET_DEFAULTS = Object.freeze({
   // 单步 prompt 达到多少 token 就该换新会话（0 = 不轮换）。
   rotatePromptTokens: 80000,
   // 会话至少完整跑过多少个回合才允许轮换：太短的会话轮换只会白付一次冷启动 cacheMiss。
-  rotateMinTurns: 20,
+  rotateMinTurns: 5,
 });
 
 const LIMIT_KEYS = Object.keys(CONTEXT_BUDGET_DEFAULTS);
@@ -131,7 +131,7 @@ export function createContextBudget({ limits = {}, now = () => Date.now() } = {}
    * 用历史数据回填一条会话的规模。
    *
    * 为什么需要：桥接刚重启时内存里没有任何采样，一条**已经长到 77 万 token** 的老会话
-   * 要再走 20 个回合才够 `rotateMinTurns`，等于刹车在重启后失灵半天。
+   * 要再走满 `rotateMinTurns` 个回合才够条件，等于刹车在重启后失灵半天。
    * 账本（state/token-usage.jsonl）里有每步的 prompt 大小和回合号，启动时读一次就能填上。
    */
   function seed(sessionId, { promptTokens = 0, turns = 0, turn = null } = {}) {

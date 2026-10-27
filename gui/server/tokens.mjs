@@ -160,7 +160,7 @@ export function tokenOverview({ days = 7, sessions = 12 } = {}) {
     budget: {
       maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
       rotatePromptTokens: Number(context.rotatePromptTokens ?? 80000),
-      rotateMinTurns: Number(context.rotateMinTurns ?? 20),
+      rotateMinTurns: Number(context.rotateMinTurns ?? 5),
     },
   };
 }

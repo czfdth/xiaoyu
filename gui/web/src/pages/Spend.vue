@@ -8,7 +8,7 @@ const data = ref(null);
 const loading = ref(true);
 const error = ref('');
 const saving = ref(false);
-const form = ref({ maxStepsPerTurn: 30, rotatePromptTokens: 80000, rotateMinTurns: 20 });
+const form = ref({ maxStepsPerTurn: 30, rotatePromptTokens: 80000, rotateMinTurns: 5 });
 
 const totals = computed(() => data.value?.totals ?? {});
 const days = computed(() => data.value?.days ?? []);

@@ -891,7 +891,7 @@ function loadConfig() {
         // 0 表示关闭对应那一项。
         maxStepsPerTurn: 30,
         rotatePromptTokens: 80000,
-        rotateMinTurns: 20
+        rotateMinTurns: 5
       },
       // 操作者在控制台为单个会话预写的「初始提示词」的字数上限（只在首次唤醒时注入一次）。
       // 它不是安全边界，只是防止误粘贴一篇长文把首次唤醒的 prompt 撑爆。
@@ -922,7 +922,7 @@ function loadConfig() {
     wakeMaxChars: 6000,
     maxStepsPerTurn: 30,
     rotatePromptTokens: 80000,
-    rotateMinTurns: 20,
+    rotateMinTurns: 5,
     ...(cfg.socialV2.context ?? {})
   };
   cfg.socialV2.tools = {
@@ -4832,7 +4832,7 @@ async function main() {
             for (const k of ['recentLimit', 'unreadLimit', 'contextWindow']) {
               if (merged.context[k] !== undefined) {
                 const n = Number(merged.context[k]);
-                merged.context[k] = Number.isFinite(n) ? Math.max(1, Math.round(n)) : current.context?.[k] ?? 20;
+                merged.context[k] = Number.isFinite(n) ? Math.max(1, Math.round(n)) : current.context?.[k] ?? 5;
               }
             }
             for (const [name, fallback, min, max] of [['wakeMessageLimit', 12, 1, 100], ['wakeRecentLimit', 4, 0, 20], ['wakeMaxChars', 6000, 500, 20000]]) {
@@ -9462,7 +9462,7 @@ async function main() {
     const st = socialState(key);
     st.phase = 'active';
     st.lastCheckAt = now;
-    st.nextCheckAt = now + randInt(Number(cfg.social?.activeCheckMinMs ?? 20000), Number(cfg.social?.activeCheckMaxMs ?? 40000));
+    st.nextCheckAt = now + randInt(Number(cfg.social?.activeCheckMinMs ?? 5000), Number(cfg.social?.activeCheckMaxMs ?? 40000));
     st.lastActiveMessageAt = now;
     st.activeEnteredAt = now;
     st.probeDeadline = 0;
@@ -9557,7 +9557,7 @@ async function main() {
     const promptText = buildActiveExitPrompt(key, roleHint);
     scheduleSocialReply(
       key, promptText,
-      Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+      Number(cfg.social?.activeReplyDelayMinMs ?? 500),
       Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
       '活跃超时退场',
       true
@@ -9738,7 +9738,7 @@ async function main() {
                 const promptText = buildProactivePrompt(key, roleHint);
                 scheduleSocialReply(
                   key, promptText,
-                  Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+                  Number(cfg.social?.activeReplyDelayMinMs ?? 500),
                   Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
                   '主动开话题'
                 );
@@ -9753,7 +9753,7 @@ async function main() {
         if (now >= st.nextCheckAt) {
           const newMsgs = (social.recentMessages.get(key) ?? []).filter((m) => m.time > st.lastCheckAt);
           st.lastCheckAt = now;
-          st.nextCheckAt = now + randInt(Number(cfg.social?.activeCheckMinMs ?? 20000), Number(cfg.social?.activeCheckMaxMs ?? 40000));
+          st.nextCheckAt = now + randInt(Number(cfg.social?.activeCheckMinMs ?? 5000), Number(cfg.social?.activeCheckMaxMs ?? 40000));
           if (newMsgs.length) {
             st.lastActiveMessageAt = now;
             const mustReply = key.startsWith('private:') || newMsgs.some((m) => m.quoteTargetIsSelf || isMustReplyText(m.plain ?? m.text));
@@ -9785,7 +9785,7 @@ async function main() {
             const batchMedia = promptMsgs.flatMap((m) => Array.isArray(m.media) ? m.media : []);
             scheduleSocialReply(
               key, promptText,
-              Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+              Number(cfg.social?.activeReplyDelayMinMs ?? 500),
               Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
               '活跃期回应',
               false,
@@ -9800,7 +9800,7 @@ async function main() {
               const promptText = buildProbePrompt(key);
               scheduleSocialReply(
                 key, promptText,
-                Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+                Number(cfg.social?.activeReplyDelayMinMs ?? 500),
                 Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
                 '冷场试探'
               );
@@ -12136,7 +12136,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
           const promptText = `${roleHint ? roleHint + '\n\n' : ''}${isOwner ? '【管理员】' : ''}${textContent}${mediaHintFor(key, messageRef, mediaList)}`;
           scheduleSocialReply(
             key, promptText,
-            Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+            Number(cfg.social?.activeReplyDelayMinMs ?? 500),
             Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
             '私聊即时回应',
             false,
@@ -12174,7 +12174,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       } else {
         scheduleSocialReply(
           key, promptText,
-          Number(cfg.social?.activeReplyDelayMinMs ?? 2000),
+          Number(cfg.social?.activeReplyDelayMinMs ?? 500),
           Number(cfg.social?.activeReplyDelayMaxMs ?? 8000),
           '触发进入活跃',
           false,
