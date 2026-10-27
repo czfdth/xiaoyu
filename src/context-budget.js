@@ -2,9 +2,11 @@
 // 实测一支群聊会话从 21k token 长到 79 万 token 后，单回合 132 步 = 上亿 token，
 // 钱几乎全花在「重复发送同一段旧历史」上。
 //
-// 这个模块只管两件事，判定逻辑与 I/O 完全分离（便于单独测试）：
+// 这个模块只管四件事，判定逻辑与 I/O 完全分离（便于单独测试）：
 //   1. 单回合步数上限：一个回合跑到 N 步还没收尾，说明大概率在打转，该打断；
-//   2. 单步 prompt 超限：历史已经长到不划算，回合结束后换一条新会话（带最近上下文接力）。
+//   2. 单步 prompt 超限：历史已经长到不划算，回合结束后换一条新会话（带最近上下文接力）；
+//   3. 空闲刷新：缓存已经过期的那次唤醒，直接起新会话比重读整段历史便宜得多；
+//   4. 打转检测：同一个工具同样的参数反复调，及时打断，别让它空转到步数上限。
 //
 // 注意：这里**不**做任何裁剪/摘要，会话内容的取舍由桥接层决定。
 
@@ -12,12 +14,25 @@ export const CONTEXT_BUDGET_DEFAULTS = Object.freeze({
   // 单个回合最多走多少步（0 = 不限制）。正常聊天 1~6 步收尾，20~30 步基本是空转。
   maxStepsPerTurn: 30,
   // 单步 prompt 达到多少 token 就该换新会话（0 = 不轮换）。
-  rotatePromptTokens: 80000,
+  rotatePromptTokens: 45000,
   // 会话至少完整跑过多少个回合才允许轮换：太短的会话轮换只会白付一次冷启动 cacheMiss。
   rotateMinTurns: 5,
+  // 空闲多久之后的下一次唤醒直接起新会话（缓存反正已经过期）。0 = 关闭。
+  idleRotateAfterMs: 20 * 60 * 1000,
+  // 空闲刷新只对「已经不小」的会话有意义：低于这个规模，换不换都一样。
+  idleRotateTokens: 35000,
+  // 同一个工具用同样的参数连续调几次算打转（0 = 不检测）。
+  repeatToolLimit: 2,
 });
 
-const LIMIT_KEYS = Object.keys(CONTEXT_BUDGET_DEFAULTS);
+const INT_KEYS = [
+  'maxStepsPerTurn',
+  'rotatePromptTokens',
+  'rotateMinTurns',
+  'idleRotateAfterMs',
+  'idleRotateTokens',
+  'repeatToolLimit',
+];
 
 function intIn(value, fallback, min, max) {
   const n = Number(value);
@@ -32,7 +47,7 @@ function intIn(value, fallback, min, max) {
 export function normalizeContextBudget(raw = {}) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const out = {};
-  for (const key of LIMIT_KEYS) out[key] = intIn(src[key], CONTEXT_BUDGET_DEFAULTS[key], 0, 10_000_000);
+  for (const key of INT_KEYS) out[key] = intIn(src[key], CONTEXT_BUDGET_DEFAULTS[key], 0, 10_000_000);
   return out;
 }
 
@@ -121,6 +136,20 @@ export function createContextBudget({ limits = {}, now = () => Date.now() } = {}
     return `单步 prompt ${entry.promptTokens} token ≥ ${cfg.rotatePromptTokens}，会话已跑 ${entry.turns} 回合`;
   }
 
+  /**
+   * 这一次唤醒该不该直接换新会话（空闲刷新）。
+   *
+   * 依据：缓存过期后，第一步本来就要把整段历史按未命中价重读。空闲越久越确定缓存没了，
+   * 所以「空闲够久 + 会话已经不小」时，起一条新会话（带接力）比重读旧历史便宜一个数量级。
+   */
+  function shouldRefreshIdle(sessionId, at = now()) {
+    if (cfg.idleRotateAfterMs <= 0 || cfg.idleRotateTokens <= 0) return false;
+    const entry = sessions.get(sessionId);
+    if (!entry) return false;
+    if (entry.promptTokens < cfg.idleRotateTokens) return false;
+    return at - entry.updatedAt >= cfg.idleRotateAfterMs;
+  }
+
   function stats(sessionId) {
     const entry = sessions.get(sessionId);
     if (!entry) return null;
@@ -150,5 +179,46 @@ export function createContextBudget({ limits = {}, now = () => Date.now() } = {}
     sessions.delete(sessionId);
   }
 
-  return { limits: cfg, observe, noteTurnEnd, shouldRotate, rotateReason, stats, seed, forget, size: () => sessions.size };
+  return {
+    limits: cfg,
+    observe,
+    noteTurnEnd,
+    shouldRotate,
+    rotateReason,
+    shouldRefreshIdle,
+    stats,
+    seed,
+    forget,
+    size: () => sessions.size,
+  };
+}
+
+/**
+ * 打转检测：同一个工具、同样的参数，在一个回合里反复调用就该停。
+ *
+ * 为什么不用「同一个工具调几次」：她正常也会连发 3 条消息（qq_send_message × 3，参数不同）、
+ * 连续 wait 两次。真正没意义的是**参数一模一样**的重复调用 —— 那只可能是在打转。
+ * 调用方负责把可以合法重复的工具（等待、标记已读、设置唤醒）排除在外。
+ */
+export function createRepeatGuard({ limit = 2 } = {}) {
+  const seen = new Map(); // sessionId -> Map<signature, count>
+
+  function note(sessionId, signature) {
+    if (limit <= 0 || typeof sessionId !== 'string' || !sessionId || !signature) return false;
+    let m = seen.get(sessionId);
+    if (!m) {
+      m = new Map();
+      seen.set(sessionId, m);
+    }
+    const n = (m.get(signature) || 0) + 1;
+    m.set(signature, n);
+    return n >= limit;
+  }
+
+  /** 回合结束/新回合开始时清掉计数。 */
+  function reset(sessionId) {
+    seen.delete(sessionId);
+  }
+
+  return { note, reset, limit, size: () => seen.size };
 }

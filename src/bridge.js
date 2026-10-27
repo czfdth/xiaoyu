@@ -54,7 +54,7 @@ import { hardenDir, manualDirCommand } from './state-acl.mjs';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { resolvePriceTable, normalizeUsage } from './model-prices.js';
 import { createTokenLedger, usageOfEvent } from './token-ledger.js';
-import { createContextBudget } from './context-budget.js';
+import { createContextBudget, createRepeatGuard } from './context-budget.js';
 import {
   loadSlang,
   saveSlang,
@@ -531,6 +531,25 @@ function isSendToolName(name) {
   return SEND_TOOL_RE.test(String(name ?? ''));
 }
 
+// 打转检测要排除的工具：这些「同样的参数再调一次」是有意义的等待/收尾动作，
+// 不是打转。按去掉 mcp__ 前缀的短名判断。
+const REPEATABLE_TOOLS = new Set([
+  'qq_wait_for_messages',
+  'qq_mark_read',
+  'qq_set_wake_config',
+  'qq_social_state',
+  'qq_get_prompt',
+  'qq_reminders',
+  'qq_remind',
+  'qq_status',
+]);
+function shortToolName(name) {
+  // `mcp__snowluma__qq_reply` -> `qq_reply`；没有前缀时原样返回。
+  const s = String(name ?? '');
+  const i = s.lastIndexOf('__');
+  return i >= 0 ? s.slice(i + 2) : s;
+}
+
 // 分句规则提示：真人聊天不会主动用空格，因此空格被桥接当作“分条信号”。
 // 中英文/数字之间的空格同样会分条，所以不想分条就不要加空格。
 const SPACE_SPLIT_HINT = '想分多条消息时用空格分隔；不想分条就不要加空格，用标点连接。注意：中英文/数字之间的空格也会被当作分条信号。';
@@ -887,11 +906,16 @@ function loadConfig() {
         // 上下文预算：DSH 会话历史只增不减，每一步都会把整段历史重新计费。
         // maxStepsPerTurn —— 单回合跑到这么多步还没收尾就打断（大概率在空转）；
         // rotatePromptTokens —— 单步 prompt 到这个大小就换新会话，并带上最近几条消息接力；
-        // rotateMinTurns —— 会话至少跑过这么多回合才允许轮换（太短轮换只白付一次冷启动）。
+        // rotateMinTurns —— 会话至少跑过这么多回合才允许轮换（太短轮换只白付一次冷启动）；
+        // idleRotateAfterMs / idleRotateTokens —— 空闲到缓存肯定过期时，下一次唤醒直接起新会话；
+        // repeatToolLimit —— 同一工具同一参数反复调用几次算打转（0 = 不检测）。
         // 0 表示关闭对应那一项。
         maxStepsPerTurn: 30,
-        rotatePromptTokens: 80000,
-        rotateMinTurns: 5
+        rotatePromptTokens: 45000,
+        rotateMinTurns: 5,
+        idleRotateAfterMs: 20 * 60 * 1000,
+        idleRotateTokens: 35000,
+        repeatToolLimit: 2
       },
       // 操作者在控制台为单个会话预写的「初始提示词」的字数上限（只在首次唤醒时注入一次）。
       // 它不是安全边界，只是防止误粘贴一篇长文把首次唤醒的 prompt 撑爆。
@@ -921,8 +945,11 @@ function loadConfig() {
     wakeRecentLimit: 4,
     wakeMaxChars: 6000,
     maxStepsPerTurn: 30,
-    rotatePromptTokens: 80000,
+    rotatePromptTokens: 45000,
     rotateMinTurns: 5,
+    idleRotateAfterMs: 20 * 60 * 1000,
+    idleRotateTokens: 35000,
+    repeatToolLimit: 2,
     ...(cfg.socialV2.context ?? {})
   };
   cfg.socialV2.tools = {
@@ -2527,6 +2554,10 @@ async function main() {
    * 判定逻辑在 src/context-budget.js（纯函数，可单测），这里只负责接线与副作用。
    */
   const contextBudget = createContextBudget({ limits: cfg.socialV2.context });
+  /** 打转检测：同一工具同样参数反复调用就打断（等待/已读/唤醒类工具不参与）。 */
+  const repeatGuard = createRepeatGuard({ limit: cfg.socialV2.context.repeatToolLimit });
+  /** 一个回合里只会因为打转被打断一次（打断后 DSH 可能还会再吐几步）。 */
+  const repeatBrokenTurns = new Set();
   /** key -> 轮换会话时留下的「最近聊到哪」接力文本（下一条 prompt 用掉即删）。 */
   const contextCarryover = new Map();
   const sendToolSucceededSessions = new Set(); // sessionId：当前 turn 内 MCP 发送类工具至少成功一次
@@ -2987,12 +3018,16 @@ async function main() {
    *   · 留下「最近聊到哪」的接力文本，下一条 prompt 会带上，模型不至于完全断片；
    *   · 不清理限流/等待缓存（那是 key 级状态，跟会话无关）。
    */
-  async function rotateContextSession(key, sessionId, why) {
+  async function rotateContextSession(key, sessionId, why, { reboot = true } = {}) {
     if (state.sessions[key] !== sessionId) return false;
     // 接力文本：最近若干条真实消息（含发送者），让新会话能接着往下聊。
+    let carryChars = 0;
     try {
-      const carry = buildContextBlock(key);
-      if (carry && carry !== '（无）') contextCarryover.set(key, carry);
+      const carry = contextCarryoverText(key);
+      if (carry && carry !== '（无）') {
+        contextCarryover.set(key, carry);
+        carryChars = carry.length;
+      }
     } catch { /* 拿不到就不带接力，宁可少带也不阻断轮换 */ }
     delete state.sessions[key];
     delete state.sessionPolicies[key];
@@ -3010,10 +3045,11 @@ async function main() {
     social.exitingSessions.delete(sessionId);
     contextBudget.forget(sessionId);
     api.events.forget?.(sessionId);
-    // 下一次唤醒走完整引导（角色/身份/初始提示词 + 接力），避免新会话「不知道自己在哪」。
     const st = socialV2.conversations.get(key);
     if (st) {
-      st.bootstrapSent = false;
+      // 预算轮换（reboot）时下一次唤醒走完整引导；空闲刷新的唤醒**就在眼前**，
+      // 再置 false 只会让下一条普通消息多付一次引导 prompt。
+      if (reboot) st.bootstrapSent = false;
       st.modelSeenSeqs = new Set();
     }
     saveState();
@@ -3024,9 +3060,35 @@ async function main() {
     try {
       await withTimeout(api.workspace.archiveSession({ sessionId }), DSH_CONTROL_TIMEOUT_MS, 'archiveSession');
     } catch { /* 归档失败只是控制台多一条旧会话，不影响新会话 */ }
-    log(`♻️ 上下文轮换：${key} 换新会话（旧 ${sessionId}；${why}）`);
+    log(`♻️ 上下文轮换：${key} 换新会话（旧 ${sessionId}；${why}；接力 ${carryChars} 字）`);
     appendActivity(`${key} [context-budget] 会话轮换：${why}`);
     return true;
+  }
+
+  /**
+   * 空闲刷新：缓存已经过期（空闲超过 `idleRotateAfterMs`）时，下一次唤醒本来就要按未命中价
+   * 重读整段历史 —— 与其重读 5 万，不如换条新会话只带接力文本（几千 token）重新开始。
+   * 这不是「为了省钱让她失忆」：接力文本就是最近 20 条真实消息，够接住话头。
+   */
+  async function maybeRefreshIdleSession(key) {
+    try {
+      const sessionId = state.sessions[key];
+      if (!sessionId) return false;
+      if (!contextBudget.shouldRefreshIdle(sessionId)) return false;
+      const before = contextBudget.stats(sessionId);
+      try {
+        if (isConversationBusyV2(key, getSocialV2State(key))) return false;
+      } catch { /* 读不到状态就照常刷新 */ }
+      const gapMin = before?.updatedAt ? Math.round((Date.now() - before.updatedAt) / 60000) : 0;
+      return await rotateContextSession(
+        key, sessionId,
+        `空闲 ${gapMin} 分钟，缓存已过期（单步 ${before?.promptTokens ?? '?'} token）`,
+        { reboot: false }
+      );
+    } catch (error) {
+      log('空闲刷新失败', error?.message ?? error);
+      return false;
+    }
   }
 
   /** 回合收尾后判定是否需要轮换；延迟几秒，避免打断刚发出的回复。 */  function maybeRotateContextSession(sessionId) {
@@ -9443,6 +9505,27 @@ async function main() {
   }
 
   /**
+   * 轮换前的接力文本：最近聊到哪。
+   *
+   * 二代模式的消息存在 `socialV2.conversations[key].recentMessages`（有 seq / isSelf / sender），
+   * 一代模式存在 `social.recentMessages`（那个 map）。**只读后者是错的**：线上跑的是 reserved2，
+   * 那份永远是空的 —— 轮换出来就像她突然失忆。所以先读二代，再回退一代。
+   */
+  function contextCarryoverText(key) {
+    try {
+      const st = socialV2.conversations.get(key);
+      const recent = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
+      const take = Math.max(6, Number(cfg.socialV2?.context?.contextWindow ?? 20));
+      const lines = recent
+        .filter((m) => m && (m.text || m.plain))
+        .slice(-take)
+        .map((m) => `${m.isOwner ? '【管理员】' : ''}${m.isSelf ? '你' : (m.sender || '未知')}：${String(m.text || m.plain).slice(0, 160)}`);
+      if (lines.length) return lines.join('\n');
+    } catch { /* 二代读不到就回退一代 */ }
+    return buildContextBlock(key);
+  }
+
+  /**
    * 上下文轮换后的接力：把「最近聊到哪」贴到新会话的第一条 prompt 上。
    *
    * 为什么要它：轮换会丢掉 DSH 会话里的完整原文，只剩 key 级的最近消息列表。
@@ -9597,6 +9680,8 @@ async function main() {
       return { ok: true, queued: true };
     }
     let sessionId;
+    // 空闲刷新：这条唤醒距上一步已经超过缓存有效期，先换新会话（带接力），别按未命中价重读整段历史。
+    await maybeRefreshIdleSession(key);
     try {
       sessionId = await ensureSession(key);
     } catch (error) {
@@ -12203,6 +12288,8 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     }
 
     let sessionId;
+    // 空闲刷新：距上一步已超过缓存有效期，先换新会话（带接力），别重读整段历史。
+    await maybeRefreshIdleSession(key);
     try {
       sessionId = await ensureSession(key);
     } catch (error) {
@@ -12493,12 +12580,31 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
               pendingSendToolCalls.delete(frame.sessionId);
               v2TurnStartAt.set(frame.sessionId, Date.now());
               turnLeaseNoted.delete(frame.sessionId);
+              // 打转计数按回合清零：跨回合的重复是正常的（每小时查一次未读）。
+              repeatGuard.reset(frame.sessionId);
+              repeatBrokenTurns.delete(frame.sessionId);
             }
             if (frame.event.type === 'tool/call') {
               const toolName = String(frame.event.data?.name ?? '');
               const callId = frame.event.data?.callId;
-              const args = sanitizeToolArgs(frame.event.data?.arguments ?? frame.event.data?.input ?? frame.event.data);
+              const rawArgs = frame.event.data?.arguments ?? frame.event.data?.input ?? frame.event.data;
+              const args = sanitizeToolArgs(rawArgs);
               appendToolLog({ type: 'call', time: new Date().toISOString(), key, sessionId: frame.sessionId, tool: toolName, args });
+              // 打转检测：同工具 + 同参数在一个回合里反复出现，就打断这一回合。
+              // 只按参数判重是有意的：她正常也会连发 3 条消息（参数不同）、连续 wait 两次。
+              if (contextBudget.limits.repeatToolLimit > 0
+                && !REPEATABLE_TOOLS.has(shortToolName(toolName))
+                && !repeatBrokenTurns.has(frame.sessionId)) {
+                let signature = '';
+                try { signature = `${toolName}|${JSON.stringify(rawArgs ?? null)}`; } catch { signature = `${toolName}|?`; }
+                if (repeatGuard.note(frame.sessionId, signature)) {
+                  repeatBrokenTurns.add(frame.sessionId);
+                  log(`⛔ 打转检测：${key} 用同样的参数重复调用 ${shortToolName(toolName)}，打断这一回合`);
+                  appendActivity(`${key} [context-budget] 打转：${shortToolName(toolName)} 同参重复调用，已打断`);
+                  void withTimeout(api.stopSessionWork(frame.sessionId), DSH_CONTROL_TIMEOUT_MS, 'stopSessionWork')
+                    .catch((error) => log(`⚠️ 打转打断失败 ${key}：${error?.message ?? error}`));
+                }
+              }
               if (callId != null) {
                 if (isSendToolName(toolName)) {
                   let pending = pendingSendToolCalls.get(frame.sessionId);
@@ -12548,6 +12654,8 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
             if (ended) {
               // 上下文预算：回合收尾时才计数/判定轮换 —— 回合进行中换会话会把回复截断。
               contextBudget.noteTurnEnd(frame.sessionId);
+              repeatGuard.reset(frame.sessionId);
+              repeatBrokenTurns.delete(frame.sessionId);
               maybeRotateContextSession(frame.sessionId);
               // reserved2 无行动兜底：普通唤醒回合若既没发消息、也没 mark_read / set_wake_config，
               // 则累计 noActionCount；达到阈值后自动重置 WakeConfig，避免 AI 卡死。

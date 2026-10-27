@@ -4,6 +4,7 @@ import {
   CONTEXT_BUDGET_DEFAULTS,
   normalizeContextBudget,
   createContextBudget,
+  createRepeatGuard,
 } from '../src/context-budget.js';
 
 test('预算配置默认值可直接用，非法值不放大成无限制', () => {
@@ -106,4 +107,45 @@ test('回填只补不减：更小的历史值不会覆盖已有统计', () => {
   const s = budget.stats('s1');
   assert.equal(s.promptTokens, 90000);
   assert.equal(s.turns, 2);
+});
+
+test('空闲刷新：缓存过期且会话不小才换，两种阈值都能关掉', () => {
+  const budget = createContextBudget({ limits: { idleRotateAfterMs: 20 * 60 * 1000, idleRotateTokens: 24000 } });
+  const t0 = Date.now();
+  // 让 updatedAt 落在 t0 附近
+  budget.seed('s1', { promptTokens: 40000, turns: 10, turn: 10 });
+  const base = budget.stats('s1').updatedAt;
+  assert.equal(budget.shouldRefreshIdle('s1', base + 5 * 60 * 1000), false, '5 分钟：缓存可能还在');
+  assert.equal(budget.shouldRefreshIdle('s1', base + 25 * 60 * 1000), true, '25 分钟且 4 万 token：该换');
+
+  const small = createContextBudget({ limits: { idleRotateAfterMs: 60000, idleRotateTokens: 24000 } });
+  small.seed('s2', { promptTokens: 5000, turns: 3 });
+  assert.equal(small.shouldRefreshIdle('s2', Date.now() + 3600000), false, '会话太小，换不换都一样');
+
+  const off = createContextBudget({ limits: { idleRotateAfterMs: 0, idleRotateTokens: 24000 } });
+  off.seed('s3', { promptTokens: 90000, turns: 30 });
+  assert.equal(off.shouldRefreshIdle('s3', Date.now() + 3600000), false);
+  assert.equal(budget.shouldRefreshIdle('未知会话', Date.now() + 3600000), false);
+});
+
+test('打转检测：同工具同参数到阈值才报，不同参数互不影响，reset 清零', () => {
+  const guard = createRepeatGuard({ limit: 2 });
+  assert.equal(guard.note('s1', 'qq_send_message|{"text":"在"}'), false);
+  assert.equal(guard.note('s1', 'qq_send_message|{"text":"在"}'), true, '第二次同参就报');
+  assert.equal(guard.note('s1', 'qq_send_message|{"text":"好"}'), false, '参数不同是正常连发');
+  guard.reset('s1');
+  assert.equal(guard.note('s1', 'qq_send_message|{"text":"在"}'), false, 'reset 后重新计数');
+});
+
+test('打转检测：上限 0 关闭，非法参数不报错', () => {
+  const off = createRepeatGuard({ limit: 0 });
+  assert.equal(off.note('s1', 'x'), false);
+  assert.equal(off.note('s1', 'x'), false);
+
+  const g = createRepeatGuard({ limit: 3 });
+  assert.equal(g.note(null, 'x'), false);
+  assert.equal(g.note('s1', ''), false);
+  assert.equal(g.note('s1', 'a'), false);
+  assert.equal(g.note('s1', 'a'), false);
+  assert.equal(g.note('s1', 'a'), true);
 });

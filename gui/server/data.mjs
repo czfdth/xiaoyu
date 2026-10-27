@@ -255,7 +255,7 @@ export function saveToolDisabled(name, disabled) {
   return { ok: true, backup: backupFile, disabledTools: next.socialV2.disabledTools };
 }
 
-/** 上下文预算：只写 socialV2.context 里的三个刹车值，0 表示关闭对应那一项。 */
+/** 上下文预算：只写 socialV2.context 里的几个刹车值，0 表示关闭对应那一项。 */
 export function saveContextBudget(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '预算必须是对象');
   const pick = (key, min, max) => {
@@ -269,7 +269,11 @@ export function saveContextBudget(patch = {}) {
   const maxStepsPerTurn = pick('maxStepsPerTurn', 0, 500);
   const rotatePromptTokens = pick('rotatePromptTokens', 0, 2_000_000);
   const rotateMinTurns = pick('rotateMinTurns', 0, 1000);
-  if (maxStepsPerTurn == null && rotatePromptTokens == null && rotateMinTurns == null) {
+  const idleRotateAfterMs = pick('idleRotateAfterMs', 0, 24 * 60 * 60 * 1000);
+  const idleRotateTokens = pick('idleRotateTokens', 0, 2_000_000);
+  const repeatToolLimit = pick('repeatToolLimit', 0, 20);
+  if ([maxStepsPerTurn, rotatePromptTokens, rotateMinTurns, idleRotateAfterMs, idleRotateTokens, repeatToolLimit]
+    .every((v) => v == null)) {
     throw new HttpError(400, '没有可保存的预算项');
   }
   const cfg = readConfig();
@@ -278,6 +282,9 @@ export function saveContextBudget(patch = {}) {
   if (maxStepsPerTurn != null) context.maxStepsPerTurn = maxStepsPerTurn;
   if (rotatePromptTokens != null) context.rotatePromptTokens = rotatePromptTokens;
   if (rotateMinTurns != null) context.rotateMinTurns = rotateMinTurns;
+  if (idleRotateAfterMs != null) context.idleRotateAfterMs = idleRotateAfterMs;
+  if (idleRotateTokens != null) context.idleRotateTokens = idleRotateTokens;
+  if (repeatToolLimit != null) context.repeatToolLimit = repeatToolLimit;
   next.socialV2.context = context;
   const backupFile = backup(CONFIG_FILE);
   atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
@@ -285,11 +292,19 @@ export function saveContextBudget(patch = {}) {
   return {
     ok: true,
     backup: backupFile,
-    budget: {
-      maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
-      rotatePromptTokens: Number(context.rotatePromptTokens ?? 80000),
-      rotateMinTurns: Number(context.rotateMinTurns ?? 5),
-    },
+    budget: contextBudgetOf(context),
+  };
+}
+
+/** 把 socialV2.context 里的预算字段读成面板要的形状（缺省值与 src/context-budget.js 保持一致）。 */
+export function contextBudgetOf(context = {}) {
+  return {
+    maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
+    rotatePromptTokens: Number(context.rotatePromptTokens ?? 45000),
+    rotateMinTurns: Number(context.rotateMinTurns ?? 5),
+    idleRotateAfterMs: Number(context.idleRotateAfterMs ?? 20 * 60 * 1000),
+    idleRotateTokens: Number(context.idleRotateTokens ?? 35000),
+    repeatToolLimit: Number(context.repeatToolLimit ?? 2),
   };
 }
 

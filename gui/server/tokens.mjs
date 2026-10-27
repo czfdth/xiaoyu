@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { STATE_DIR, readConfig } from '../../src/paths.js';
+import { contextBudgetOf } from './data.mjs';
 import { resolvePriceTable, priceUsage, normalizeUsage, ZERO_BUCKETS, addBuckets } from '../../src/model-prices.js';
 
 const FILE = path.join(STATE_DIR, 'token-usage.jsonl');
@@ -157,10 +158,6 @@ export function tokenOverview({ days = 7, sessions = 12 } = {}) {
     },
     days: dayRows,
     sessions: sessionRows,
-    budget: {
-      maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
-      rotatePromptTokens: Number(context.rotatePromptTokens ?? 80000),
-      rotateMinTurns: Number(context.rotateMinTurns ?? 5),
-    },
+    budget: contextBudgetOf(context),
   };
 }

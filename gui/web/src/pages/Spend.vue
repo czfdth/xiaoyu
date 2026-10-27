@@ -8,12 +8,50 @@ const data = ref(null);
 const loading = ref(true);
 const error = ref('');
 const saving = ref(false);
-const form = ref({ maxStepsPerTurn: 30, rotatePromptTokens: 80000, rotateMinTurns: 5 });
+const form = ref({
+  maxStepsPerTurn: 30,
+  rotatePromptTokens: 45000,
+  rotateMinTurns: 5,
+  idleRotateAfterMs: 20 * 60 * 1000,
+  idleRotateTokens: 35000,
+  repeatToolLimit: 2,
+});
 
 const totals = computed(() => data.value?.totals ?? {});
 const days = computed(() => data.value?.days ?? []);
 const sessions = computed(() => data.value?.sessions ?? []);
-const rotateAt = computed(() => Number(data.value?.budget?.rotatePromptTokens ?? 80000));
+const rotateAt = computed(() => Number(data.value?.budget?.rotatePromptTokens ?? 45000));
+
+// 面板上按「分钟」显示，存的时候还是毫秒（配置里就是毫秒）。
+const idleMinutes = computed({
+  get: () => Math.round((Number(form.value.idleRotateAfterMs) || 0) / 60000),
+  set: (v) => { form.value.idleRotateAfterMs = Math.max(0, Number(v) || 0) * 60000; },
+});
+
+const PRESETS = [
+  {
+    id: 'lean', label: '省一点',
+    desc: '3 万就换、空闲 10 分钟就换新会话',
+    budget: { maxStepsPerTurn: 20, rotatePromptTokens: 30000, rotateMinTurns: 3, idleRotateAfterMs: 600000, idleRotateTokens: 24000 },
+  },
+  {
+    id: 'balanced', label: '均衡',
+    desc: '5 万即换、空闲 20 分钟刷新（默认）',
+    budget: { maxStepsPerTurn: 30, rotatePromptTokens: 45000, rotateMinTurns: 5, idleRotateAfterMs: 1200000, idleRotateTokens: 35000 },
+  },
+  {
+    id: 'context', label: '保上下文',
+    desc: '10 万才换、空闲 40 分钟才刷新',
+    budget: { maxStepsPerTurn: 40, rotatePromptTokens: 100000, rotateMinTurns: 10, idleRotateAfterMs: 2400000, idleRotateTokens: 40000 },
+  },
+];
+const activePreset = computed(() => PRESETS.find((p) => Object.entries(p.budget)
+  .every(([k, v]) => Number(form.value[k]) === Number(v)))?.id ?? '');
+
+async function applyPreset(p) {
+  form.value = { ...form.value, ...p.budget };
+  await save(`已切到「${p.label}」；桥接重启后生效`);
+}
 
 async function load() {
   loading.value = true;
@@ -46,7 +84,7 @@ function pct(n) {
   return `${((Number(n) || 0) * 100).toFixed(1)}%`;
 }
 
-async function save() {
+async function save(message = '已保存；桥接重启后按新预算执行') {
   if (saving.value) return;
   saving.value = true;
   try {
@@ -54,9 +92,12 @@ async function save() {
       maxStepsPerTurn: Number(form.value.maxStepsPerTurn),
       rotatePromptTokens: Number(form.value.rotatePromptTokens),
       rotateMinTurns: Number(form.value.rotateMinTurns),
+      idleRotateAfterMs: Number(form.value.idleRotateAfterMs),
+      idleRotateTokens: Number(form.value.idleRotateTokens),
+      repeatToolLimit: Number(form.value.repeatToolLimit),
     });
     form.value = { ...r.budget };
-    toast('已保存；桥接重启后按新预算执行');
+    toast(message);
   } catch (e) {
     toastError(e);
   } finally {
@@ -117,8 +158,23 @@ async function save() {
       </div>
     </Card>
 
-    <Card title="上下文预算" dim="两道刹车">
-      <div class="stack" style="gap: 10px">
+    <Card title="上下文预算" :dim="'三档预设 + 细调'">
+      <div class="stack" style="gap: 12px">
+        <div class="row" style="gap: 8px; flex-wrap: wrap">
+          <button
+            v-for="p in PRESETS" :key="p.id"
+            class="btn sm" :class="activePreset === p.id ? 'primary' : 'ghost'"
+            :disabled="saving"
+            :title="p.desc"
+            @click="applyPreset(p)"
+          >
+            {{ p.label }}
+          </button>
+          <span class="muted small" style="align-self: center">
+            {{ PRESETS.find((p) => p.id === activePreset)?.desc || '自定义' }}
+          </span>
+        </div>
+
         <div class="row" style="gap: 10px; flex-wrap: wrap">
           <label class="stack" style="gap: 4px">
             <span class="muted small">单回合最多几步</span>
@@ -126,21 +182,34 @@ async function save() {
           </label>
           <label class="stack" style="gap: 4px">
             <span class="muted small">单步 prompt 到多少就换会话</span>
-            <input v-model.number="form.rotatePromptTokens" class="input" type="number" min="0" max="2000000" step="10000" style="width: 170px" />
+            <input v-model.number="form.rotatePromptTokens" class="input" type="number" min="0" max="2000000" step="5000" style="width: 170px" />
           </label>
           <label class="stack" style="gap: 4px">
             <span class="muted small">至少跑过几个回合才换</span>
             <input v-model.number="form.rotateMinTurns" class="input" type="number" min="0" max="1000" style="width: 150px" />
           </label>
-          <button class="btn primary sm" :disabled="saving" style="align-self: flex-end" @click="save">
+        </div>
+
+        <div class="row" style="gap: 10px; flex-wrap: wrap">
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">空闲多少分钟后就起新会话</span>
+            <input v-model.number="idleMinutes" class="input" type="number" min="0" max="1440" style="width: 170px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">会话小于这个规模就不刷新</span>
+            <input v-model.number="form.idleRotateTokens" class="input" type="number" min="0" max="2000000" step="5000" style="width: 180px" />
+          </label>
+          <button class="btn primary sm" :disabled="saving" style="align-self: flex-end" @click="save()">
             {{ saving ? '保存中…' : '保存' }}
           </button>
         </div>
 
         <div class="hint">
-          步数上限：一个回合跑到这么多步还没收尾，桥接会直接打断（正常聊天 1~6 步就结束，跑几十步基本是在同一个工具上打转）。
-          轮换：单步 prompt 超过阈值后，这一轮结束就换一条新 DSH 会话，并把最近聊到的几条消息带过去接力。
-          填 0 表示关闭对应那一项。改完要重启桥接才生效。
+          <b>步数上限</b>：一个回合跑到这么多步还没收尾就打断（正常聊天 1~6 步，几十步基本在打转）。
+          <b>换会话</b>：单步 prompt 超过阈值后，这一轮结束换一条新 DSH 会话，带上最近 20 条消息接力。
+          <b>空闲刷新</b>：空闲到缓存肯定过期时，下一次唤醒本来就要按未命中价重读整段历史 —— 直接起新会话更便宜。
+          <b>打转打断</b>：同一工具、同样的参数重复 {{ form.repeatToolLimit }} 次就停（等待/已读/唤醒类工具不参与）。
+          填 0 关闭对应那一项；改完重启桥接生效。
         </div>
       </div>
     </Card>
