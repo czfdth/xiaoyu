@@ -80,6 +80,24 @@ function collect() {
   } catch { /* 没有记忆就没有 */ }
 
   // 3) 日记索引
+  // 事实层：每条事实一句话（"他 在忙：准备考研"），这样"他生日几号"这种问法也能被向量召回
+  try {
+    const facts = JSON.parse(fs.readFileSync(STATE_FILES.facts, 'utf8').replace(/^\uFEFF/, ''))?.facts ?? [];
+    for (const f of facts) {
+      if (f.validTo) continue; // 失效的旧值不索引，免得搜出互相矛盾的两条
+      const text = `${f.subject} ${f.predicate}：${f.object}`;
+      items.push({
+        id: `f:${f.subject}:${f.predicate}:${f.object}`,
+        kind: 'fact',
+        day: f.at ? new Date(Number(f.at)).toISOString().slice(0, 10) : '',
+        key: '',
+        who: '事实',
+        text: text.slice(0, 500),
+        at: Number(f.at) || Date.now(),
+      });
+    }
+  } catch { /* 还没有事实层就跳过 */ }
+
   for (const row of readJsonl(STATE_FILES.diaryIndex)) {
     const text = `${row.title ?? ''}。${row.text ?? ''}`.trim();
     if (text.length < 4) continue;
