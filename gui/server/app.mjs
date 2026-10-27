@@ -338,6 +338,13 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
     prefix: '/',
     wildcard: false,
     index: ['index.html'],
+    // skin-media-cache：媒体文件（开屏/背景视频）长期缓存，其它走默认（max-age=0 每次校验）。
+    // 文件名里没有 hash，所以用 7 天而不是 immutable——换素材后最多一周会被看到。
+    setHeaders: (res, filePath) => {
+      if (/[\\/]media[\\/]/.test(filePath)) {
+        res.setHeader('cache-control', 'public, max-age=604800');
+      }
+    },
   });
 
   app.setNotFoundHandler((req, reply) => {
