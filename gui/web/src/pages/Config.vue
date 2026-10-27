@@ -49,7 +49,7 @@ const savingRemote = ref(false);
 async function loadRemote() {
   try {
     remote.value = await get('/remote');
-    remoteForm.value = { ...remoteForm.value, port: remote.value.port, allowWrite: remote.value.allowWrite };
+    Object.assign(remoteForm, { port: remote.value.port, allowWrite: remote.value.allowWrite });
   } catch { /* 读不到不影响配置页 */ }
 }
 
@@ -57,11 +57,11 @@ async function saveRemote(enabled) {
   if (savingRemote.value) return;
   savingRemote.value = true;
   try {
-    const payload = { enabled, port: remoteForm.value.port, allowWrite: remoteForm.value.allowWrite === true };
-    if (remoteForm.value.password) payload.password = remoteForm.value.password;
+    const payload = { enabled, port: Number(remoteForm.port) || 8765, allowWrite: remoteForm.allowWrite === true };
+    if (remoteForm.password) payload.password = remoteForm.password;
     const r = await post('/remote', payload);
     remote.value = r.remote;
-    remoteForm.value.password = '';
+    remoteForm.password = '';
     toast(r.restartHint || '已保存', 'ok', 6000);
   } catch (e) { toastError(e); } finally { savingRemote.value = false; }
 }

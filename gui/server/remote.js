@@ -81,12 +81,6 @@ export function verifySession(cookie, now = Date.now()) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/** 这个 Host 头能不能访问面板（本机永远可以；局域网要开启并把地址写进白名单）。 */
-export function hostAllowed(hostname, remote = loadRemoteConfig()) {
-  if (isLoopback(hostname)) return true;
-  if (!remote.enabled) return false;
-  return true;
-}
 
 export function isLoopback(hostname) {
   const h = String(hostname ?? '').toLowerCase();

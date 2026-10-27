@@ -62,8 +62,11 @@ export async function buildApp({ guiDir }) {
       if (!remoteCfg.enabled || !remoteCfg.hasPassword) {
         return reply.code(403).send({ error: '远程访问未开启（先在配置页设置口令）' });
       }
-      const needsAuth = !(req.url === '/login' || req.url.startsWith('/api/remote/login'));
-      if (needsAuth) {
+      // 登录/登出本身是 POST，必须放行只读拦截，否则远程永远登不进来（实测踩到过）
+      const isAuthRoute = req.url === '/login'
+        || req.url.startsWith('/api/remote/login')
+        || req.url.startsWith('/api/remote/logout');
+      if (!isAuthRoute) {
         const cookie = String(req.headers.cookie ?? '');
         const hit = cookie.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
         const session = hit ? decodeURIComponent(hit.slice(SESSION_COOKIE.length + 1)) : '';
@@ -71,25 +74,25 @@ export async function buildApp({ guiDir }) {
           return reply.code(401).send({ error: '需要先登录：/login' });
         }
       }
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !remoteCfg.allowWrite) {
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !isAuthRoute && !remoteCfg.allowWrite) {
         return reply.code(403).send({ error: '远程访问默认只读（要改配置请在本机操作）' });
       }
     }
     if (local && req.url.startsWith('/api') && !assertLocalRequest(req, reply)) return reply;
     // 写操作：浏览器同源请求放行；本机其他程序/脚本必须带 x-console-token
-    const fromBrowser = Boolean(req.headers.origin) || req.headers['sec-fetch-site'] === 'same-origin';
-    if (req.url.startsWith('/api') && req.method === 'GET' && !fromBrowser && /^\/api\/(memory|journal|her|roles)/.test(req.url)) {
-      const READ_GUARD = true;
-      try {
-        const token = fs.readFileSync(path.join(STATE_DIR, 'console-token'), 'utf8').trim();
-        if (token && req.headers['x-console-token'] !== token) {
-          return reply.code(401).send({ error: '本机外部读取记忆需要 x-console-token' });
-        }
-      } catch { /* 没令牌文件就放行 */ }
-    }
-    if (req.url.startsWith('/api') && req.method !== 'GET') {
+    // 远程请求不走这一段——它们已经过了口令会话校验，这里再要 console-token 会把手机挡死
+    // （实测：手机登录后第一次点保存会被 401 "需要 x-console-token"）。
+    if (local) {
       const fromBrowser = Boolean(req.headers.origin) || req.headers['sec-fetch-site'] === 'same-origin';
-      if (!fromBrowser) {
+      if (req.url.startsWith('/api') && req.method === 'GET' && !fromBrowser && /^\/api\/(memory|journal|her|roles)/.test(req.url)) {
+        try {
+          const token = fs.readFileSync(path.join(STATE_DIR, 'console-token'), 'utf8').trim();
+          if (token && req.headers['x-console-token'] !== token) {
+            return reply.code(401).send({ error: '本机外部读取记忆需要 x-console-token' });
+          }
+        } catch { /* 没令牌文件就放行 */ }
+      }
+      if (req.url.startsWith('/api') && req.method !== 'GET' && !fromBrowser) {
         try {
           const token = fs.readFileSync(path.join(STATE_DIR, 'console-token'), 'utf8').trim();
           if (token && req.headers['x-console-token'] !== token) {
