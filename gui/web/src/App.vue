@@ -5,6 +5,7 @@ import { store, refreshOverview } from './store.js';
 import Toasts from './components/Toasts.vue';
 import Icon from './components/Icon.vue';
 import Pet from './components/Pet.vue';
+import Skin from './components/Skin.vue';
 
 const route = useRoute();
 const title = computed(() => route.meta.title || '小鱼');
@@ -47,6 +48,7 @@ onUnmounted(() => clearInterval(timer));
 </script>
 
 <template>
+  <Skin />
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
