@@ -55,6 +55,7 @@ import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardR
 import { resolvePriceTable, normalizeUsage } from './model-prices.js';
 import { createTokenLedger, usageOfEvent } from './token-ledger.js';
 import { createContextBudget, createRepeatGuard } from './context-budget.js';
+import { semanticSearch } from './semantic-index.js';
 import {
   loadSlang,
   saveSlang,
@@ -3814,6 +3815,20 @@ async function main() {
             snowluma: snowlumaHealthSnapshot(),
             activity: readActivityTail(100)
           });
+          return;
+        }
+        // 语义检索（本地 bge-m3）：给控制台和排查用。索引不存在 / Ollama 没开时返回空数组，不报错。
+        if (req.method === 'GET' && url.pathname === '/api/semantic/search') {
+          const q = String(url.searchParams.get('q') ?? '').trim();
+          if (!q) { sendJson({ ok: false, error: '缺少 q' }, 400); return; }
+          const hits = await semanticSearch({
+            query: q,
+            file: path.join(STATE_DIR, 'semantic-index.json'),
+            k: Number(url.searchParams.get('k')) || 6,
+            key: String(url.searchParams.get('key') ?? ''),
+            minScore: Number(url.searchParams.get('min')) || 0.4,
+          });
+          sendJson({ ok: true, query: q, count: hits.length, hits });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/api/presets') {

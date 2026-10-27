@@ -58,6 +58,7 @@ npm run test:integration      # = XIAOYU_IT=1 node --test tests/agency-integrati
 - [发送、语音、草图、页面与约定的执行调整](docs/工具执行调整.md)
 - [纠正、验收、练习、自我认识与误会修复](docs/连续相处五项能力.md)
 - [接入别的 agent（OpenCode / Codex / WorkBuddy）](docs/接入别的agent.md)
+- [语义检索：用本地 bge-m3 找意思相近的原话](docs/语义检索.md)
 - [绘图失败后的换路](docs/drawing-recovery.md)
 - [画册的选题、草稿、修改、归档与交付](docs/画册分步执行.md)
 

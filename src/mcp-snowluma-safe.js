@@ -1,5 +1,6 @@
 import { situationView, contextualContinuity, executeSituationSend } from './situation.js';
 import { askAgent } from './agent-delegate.js';
+import { semanticSearch } from './semantic-index.js';
 // 安全版 QQ MCP server（stdio）。由 DSH 的 MCP 客户端 spawn。
 //
 // 安全设计：
@@ -2656,14 +2657,28 @@ function recallSearch(query, days, key) {
   return hits;
 }
 
+// 语义检索的小包装：只在索引存在、Ollama 可用时返回结果；任何异常都当"没搜到"。
+async function semanticRecall(query, key) {
+  try {
+    return await semanticSearch({
+      query,
+      file: path.join(STATE_DIR, 'semantic-index.json'),
+      k: 6,
+      key,
+      minScore: 0.45,
+      log: (msg) => process.stderr.write(msg + '\n'),
+    });
+  } catch { return []; }
+}
+
 server.tool(
   'qq_recall',
-  '翻自己的旧聊天记录（按关键词搜，最近 90 天内）。想不起他说过什么、想接上以前的话题时用它；搜到的是原话，比记忆摘要更具体。',
+  '翻自己的旧聊天记录（最近 90 天内）。给关键词就走关键词，给一句“感觉”也能搜 —— 关键词搜不到时会自动用本地语义检索（bge-m3）找意思相近的原话，所以想不起他说过什么、想接上以前的话题时都可以用它；搜到的是原话，比记忆摘要更具体。',
   {
     key: z.string().describe('当前会话 key，不能翻其它群或私聊'),
     token: z.string().describe('当前会话令牌'),
-    query: z.string().describe('关键词，比如 薯片 / 生气 / 下雨'),
-    days: z.number().optional().describe('往前翻多少天，默认 30，最多 365'),
+    query: z.string().describe('关键词或一句话，比如 薯片 / 生气 / 她画不出来的时候'),
+    days: z.number().optional().describe('往前翻多少天，默认 30，最多 365（语义检索受索引天数限制）'),
     limit: z.number().optional().describe('最多返回几条，默认 8')
   },
   async ({ key, token, query, days, limit }) => {
@@ -2672,14 +2687,26 @@ server.tool(
       if (!q) return { content: [{ type: 'text', text: 'query 不能为空' }], isError: true };
       await agentApi('/api/socialV2/state?key=' + encodeURIComponent(key), { headers: { 'x-agent-token': token } });
       const hits = recallSearch(q, days, key);
-      if (!hits.length) return { content: [{ type: 'text', text: '没翻到相关的（可以换关键词，或者放宽天数）' }] };
       const top = hits.slice(0, Math.max(1, Math.min(20, Number(limit) || 8)));
       const lines = top.map((h) => {
         const who = h.role === 'her' ? '我' : (h.role === 'owner' ? '他' : '别人');
         const time = new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         return `[${time}] ${who}（人物:${h.event?.speakerId || '未知'} 消息:${h.event?.messageId || '无ID'} 事件:${h.event?.eventId || '未知'}）：${h.text.slice(0, 120)}`;
       });
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+      // 关键词不够用时补语义检索：本地 bge-m3 算向量，按意思找原话。
+      // 索引不存在或 Ollama 没开时 semanticSearch 返回 []，这里就静默只用关键词结果。
+      if (top.length < 3) {
+        const semantic = await semanticRecall(q, key);
+        const seen = new Set(top.map((h) => String(h.text).slice(0, 40)));
+        for (const hit of semantic) {
+          const sig = String(hit.text).slice(0, 40);
+          if (seen.has(sig)) continue;
+          seen.add(sig);
+          lines.push(`[${hit.day || '?'}] ${hit.who}（按意思搜到 ${hit.score}）：${hit.text.slice(0, 120)}`);
+        }
+      }
+      if (!lines.length) return { content: [{ type: 'text', text: '没翻到相关的（可以换关键词、换一句话描述，或者放宽天数）' }] };
+      return { content: [{ type: 'text', text: lines.slice(0, 16).join('\n') }] };
     } catch (error) {
       return { content: [{ type: 'text', text: '翻记录失败：' + (error?.message ?? error) }], isError: true };
     }

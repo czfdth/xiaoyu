@@ -18,8 +18,31 @@ try {
   const companion = readJson(COMPANION_CONFIG, {});
   if (!companion.apiKey) throw new Error('没有记忆提炼模型的 API key');
   const base = String(companion.baseUrl || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
+  // 本地 Ollama：走原生 /api/chat 才能关掉 thinking。qwen3 这类模型的思维链会白烧几分钟，
+  // 还经常把 JSON 挤到 max_tokens 之外；OpenAI 兼容端点没有这个开关。
+  const isOllama = String(companion.provider ?? '').toLowerCase() === 'ollama' || /:11434\b/.test(base);
+  const ollamaBase = base.replace(/\/v1\/?$/, '');
   const result = await extractDay({ stateDir: STATE_DIR, ownerQQ: cfg.ownerQQ, day, dry: args.includes('--dry'), log,
     complete: async prompt => {
+      if (isOllama) {
+        const response = await fetch(`${ollamaBase}/api/chat`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: companion.model || 'qwen3:30b',
+            messages: [{ role: 'user', content: prompt }],
+            stream: false,
+            think: companion.think === true,
+            options: { temperature: 0.2, num_predict: 8000 }
+          }),
+          signal: AbortSignal.timeout(Number(companion.timeoutMs) || 1800000)
+        });
+        if (!response.ok) throw new Error(`模型 HTTP ${response.status}`);
+        const data = await response.json();
+        if (data.done_reason === 'length') throw new Error('模型输出截断，未保存当前批次，可重试');
+        const content = data.message?.content;
+        if (!content) throw new Error('模型未返回内容');
+        return content;
+      }
       const response = await fetch(`${base}/chat/completions`, {
         method: 'POST', headers: { authorization: `Bearer ${companion.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model: companion.model || 'deepseek-chat', messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_tokens: 8000 }),
