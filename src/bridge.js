@@ -3595,7 +3595,22 @@ async function main() {
       dailyState = { ...dailyState, day: today, tokens: sum };
       dailyDirty = true;
       log(`日账：从账本补回今天的 ${sum} token`);
+
       flushDaily();
+      // 每天凌晨 4~6 点跑一次：先提炼记忆，再把句子转成结构化事实。
+      // 用 runLocalTask（它会显式传 XIAOYU_HOME）；直接 spawn 会让子进程认错数据目录。
+      try {
+        const day = dayKey();
+        const opsState = readOpsState();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        if (opsState.lastMemoryRun !== day && hour >= 4 && hour < 6) {
+          writeOpsState({ lastMemoryRun: day });
+          runLocalTask('extract-memory.mjs', 'memory-extract.log');
+          runLocalTask('extract-facts.mjs', 'facts-extract.log');
+          log('已排程：记忆提炼 + 事实抽取');
+        }
+      } catch { /* 排程失败不影响别的 */ }
+      
     } catch { /* 账本读不到就从 0 开始 */ }
   }
   function bumpDaily(tokens) {
@@ -3690,6 +3705,7 @@ async function main() {
         }
       } catch { /* 同上 */ }
       flushDaily();
+      
     };
     setTimeout(tick, 90_000);
     const timer = setInterval(tick, 60 * 1000);
