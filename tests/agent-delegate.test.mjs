@@ -88,12 +88,13 @@ test('参数拼接：model 不填就不传，填了紧跟在子命令后面（�
     });
     return child;
   };
-  const plain = await askAgent({ agent: 'opencode', prompt: '打个招呼', cfg: {}, spawnImpl: spawnStub });
+  const cfgWithBin = { socialV2: { agents: { opencode: { path: process.execPath } } } };
+  const plain = await askAgent({ agent: 'opencode', prompt: '打个招呼', cfg: cfgWithBin, spawnImpl: spawnStub });
   assert.deepEqual(calls[0].args, ['run', '打个招呼']);
   assert.equal(plain.ok, true);
   assert.equal(plain.text, '好');
 
-  const withModel = await askAgent({ agent: 'opencode', prompt: '算一下', model: 'openai/x', cfg: {}, spawnImpl: spawnStub });
+  const withModel = await askAgent({ agent: 'opencode', prompt: '算一下', model: 'openai/x', cfg: cfgWithBin, spawnImpl: spawnStub });
   assert.deepEqual(calls[1].args, ['run', '-m', 'openai/x', '算一下']);
   assert.equal(withModel.model, 'openai/x');
 });
@@ -111,7 +112,7 @@ test('非零退出码：把对方 stderr 带回来，不假装成功', async () 
     });
     return child;
   };
-  const r = await askAgent({ agent: 'opencode', prompt: 'hi', cfg: {}, spawnImpl: spawnStub });
+  const r = await askAgent({ agent: 'opencode', prompt: 'hi', cfg: { socialV2: { agents: { opencode: { path: process.execPath } } } }, spawnImpl: spawnStub });
   assert.equal(r.ok, false);
   assert.match(r.error, /退出码 3/);
   assert.match(r.error, /没有登录/);
