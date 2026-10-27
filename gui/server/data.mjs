@@ -199,6 +199,22 @@ export function saveConfig(patch = {}) {
   return { ok: true, backup: backupFile, config: configView() };
 }
 
+/** 只换控制台头像：校验图片确实存在，再写 config.ui.avatar。 */
+export function saveAvatar(name) {
+  const raw = String(name ?? '').trim();
+  const safe = path.basename(raw);
+  if (!safe || safe !== raw.replace(/\\/g, '') || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(safe)) {
+    throw new HttpError(400, '图片名不合法');
+  }
+  const full = path.join(APP_ROOT, 'images', safe);
+  if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw new HttpError(404, '这张图不存在');
+  const cfg = readConfig();
+  const next = { ...cfg, ui: { ...(cfg.ui ?? {}), avatar: safe } };
+  const backupFile = backup(CONFIG_FILE);
+  atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  return { ok: true, avatar: safe, backup: backupFile };
+}
+
 /** 只改 socialV2.tools 里的开关；写前备份。 */
 export function saveToolFlags(flags = {}) {
   if (!flags || typeof flags !== 'object' || Array.isArray(flags)) throw new HttpError(400, 'tools 必须是对象');

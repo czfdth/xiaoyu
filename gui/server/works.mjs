@@ -92,6 +92,24 @@ export function avatarImage() {
   } catch { return ''; }
 }
 
+/**
+ * 控制台头像的可选项：只列她的表情图，前端点一下就能换。
+ */
+export function avatarChoices({ limit = 16 } = {}) {
+  try {
+    const all = fs.readdirSync(IMAGES)
+      .filter((name) => IMAGE_RE.test(name))
+      .map((name) => ({ name, at: fs.statSync(path.join(IMAGES, name)).mtimeMs }))
+      .filter((f) => /^(卖萌|开心|得意|害羞|工作|睡觉)-.*鲸鱼娘/.test(f.name))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+      .slice(0, Math.max(1, Math.min(24, limit)));
+    return {
+      current: avatarImage(),
+      options: all.map(({ name }) => ({ name, url: `/api/works/image/${encodeURIComponent(name)}` })),
+    };
+  } catch { return { current: '', options: [] }; }
+}
+
 function safePath(dir, name) {
   const safe = path.basename(String(name || ''));
   if (!safe || safe !== String(name).replace(/\\/g, '')) return '';

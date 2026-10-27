@@ -12,7 +12,7 @@ import fastifyStatic from '@fastify/static';
 import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
 import {
-  overview, configView, saveConfig, runSetup,
+  overview, configView, saveConfig, saveAvatar, runSetup,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -25,7 +25,7 @@ import { gatewayState, launchGateway } from './gateway.mjs';
 import { replaySecurity, exportSecurity } from './security.mjs';
 import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
-import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, listNotes, notePath } from './works.mjs';
+import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
 import { desktopPetStatus, startDesktopPet, stopDesktopPet } from './desktoppet.mjs';
 
@@ -184,6 +184,8 @@ export async function buildApp({ guiDir }) {
     const name = avatarImage();
     return { name, url: name ? `/api/works/image/${encodeURIComponent(name)}` : '' };
   });
+  app.get('/api/works/avatar-options', async () => avatarChoices());
+  app.post('/api/ui/avatar', async (req) => saveAvatar(req.body?.name));
   app.get('/api/works/notes', async (req) => listNotes({ limit: Number(req.query?.limit) || 100, offset: Number(req.query?.offset) || 0 }));
   app.get('/api/works/note/:name', async (req, reply) => {
     const { file, type } = notePath(req.params.name);

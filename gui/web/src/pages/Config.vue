@@ -118,6 +118,29 @@ async function loadBackups() {
 }
 onMounted(loadBackups);
 
+const avatar = ref('');
+const avatarOptions = ref([]);
+const avatarBusy = ref(false);
+
+async function loadAvatar() {
+  try {
+    const r = await get('/works/avatar-options');
+    avatar.value = r.current || '';
+    avatarOptions.value = r.options || [];
+  } catch { /* 头像接口没起不影响配置页 */ }
+}
+
+async function chooseAvatar(name) {
+  if (!name || name === avatar.value || avatarBusy.value) return;
+  avatarBusy.value = true;
+  try {
+    await post('/ui/avatar', { name });
+    avatar.value = name;
+    toast('头像已换', 'ok');
+  } catch (e) { toastError(e); } finally { avatarBusy.value = false; }
+}
+onMounted(loadAvatar);
+
 async function createBackup() {
   backupBusy.value = true;
   try {
@@ -203,6 +226,34 @@ async function restoreFrom(name) {
           <input v-model="token" class="input mono" type="password" :placeholder="meta.hasToken ? '••••••（留空 = 不修改）' : '还没填'" autocomplete="new-password" />
         </Field>
       </div>
+    </Card>
+
+    <Card title="控制台头像" dim="点一张就换">
+      <div class="row" style="gap: 16px; align-items: flex-start; flex-wrap: wrap">
+        <div style="text-align: center; min-width: 82px">
+          <img
+            v-if="avatar"
+            :src="`/api/works/image/${encodeURIComponent(avatar)}`"
+            alt="当前头像"
+            style="width: 72px; height: 72px; border-radius: 18px; object-fit: cover; border: 1px solid var(--border); box-shadow: 0 0 18px rgba(79, 209, 197, .16)"
+          />
+          <div class="hint small" style="margin-top: 6px; max-width: 120px; word-break: break-all">{{ avatar || '默认' }}</div>
+        </div>
+        <div class="row" style="gap: 8px; flex-wrap: wrap; max-width: 680px">
+          <button
+            v-for="o in avatarOptions"
+            :key="o.name"
+            class="avatar-pick"
+            :class="{ active: o.name === avatar }"
+            :title="o.name"
+            :disabled="avatarBusy"
+            @click="chooseAvatar(o.name)"
+          >
+            <img :src="o.url" :alt="o.name" style="width: 48px; height: 48px; object-fit: cover; border-radius: 12px" />
+          </button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top: 8px">换完立刻生效；记在 config.json 的 ui.avatar，下次打开还是这张。</div>
     </Card>
 
     <Card title="引擎路径" dim="留空则启动时自动探测">
