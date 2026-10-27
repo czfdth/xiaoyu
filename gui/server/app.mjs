@@ -25,6 +25,7 @@ import { gatewayState, launchGateway } from './gateway.mjs';
 import { replaySecurity, exportSecurity } from './security.mjs';
 import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
 import { tokenOverview } from './tokens.mjs';
+import { vitalsView } from './vitals.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -89,6 +90,8 @@ export async function buildApp({ guiDir }) {
   app.get('/api/config', async () => configView());
 
   app.get('/api/her', async () => herState());
+  // 她的状态可视化：当前值 + 24 小时身体/心情序列 + 当天聊天分桶
+  app.get('/api/vitals', async (req) => vitalsView({ hours: Number(req.query?.hours) || 24, day: req.query?.day }));
 
   app.get('/api/journal', async (req) => journal(req.query?.day));
 

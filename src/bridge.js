@@ -56,6 +56,7 @@ import { resolvePriceTable, normalizeUsage } from './model-prices.js';
 import { createTokenLedger, usageOfEvent } from './token-ledger.js';
 import { createContextBudget, createRepeatGuard } from './context-budget.js';
 import { semanticSearch } from './semantic-index.js';
+import { recordVital } from './vitals.js';
 import {
   loadSlang,
   saveSlang,
@@ -3482,6 +3483,27 @@ async function main() {
     } catch (error) {
       log(`保活：${script} 启动失败 ${error?.message ?? error}`);
     }
+  }
+
+  /**
+   * 生命体征记录：body/mood 变了就往 state/vitals.jsonl 追一条，面板才能画趋势。
+   * 每 60 秒看一次 mtime，值没变就不写（recordVital 内部会判断）。
+   */
+  let vitalsWatchStarted = false;
+  function startVitalsWatch() {
+    if (vitalsWatchStarted) return;
+    vitalsWatchStarted = true;
+    const tick = () => {
+      try {
+        const body = JSON.parse(fs.readFileSync(STATE_FILES.body, 'utf8').replace(/^\uFEFF/, ''));
+        let mood = {};
+        try { mood = JSON.parse(fs.readFileSync(STATE_FILES.mood, 'utf8').replace(/^\uFEFF/, '')); } catch { /* 没有 mood 就只记身体 */ }
+        recordVital(STATE_FILES.vitals, body, mood);
+      } catch { /* 还没记过身体，等她自己写 */ }
+    };
+    tick();
+    const timer = setInterval(tick, 60 * 1000);
+    timer.unref?.();
   }
 
   function startLocalModelWatch() {
@@ -13307,6 +13329,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   startDshWatch();
   startSnowlumaWatch();
   startLocalModelWatch();
+  startVitalsWatch();
   startConsoleServer();
 
   await pumpMux();

@@ -83,6 +83,8 @@ export const STATE_FILES = Object.freeze({
   mood: path.join(STATE_DIR, 'mood.json'),
   inner: path.join(STATE_DIR, 'inner.json'),
   body: path.join(STATE_DIR, 'body.json'),
+  // 身体/心情的时间序列（面板画趋势用，见 src/vitals.js）
+  vitals: path.join(STATE_DIR, 'vitals.jsonl'),
   wants: path.join(STATE_DIR, 'wants.json'),
   dreams: path.join(STATE_DIR, 'dreams.jsonl'),
   fantasies: path.join(STATE_DIR, 'fantasies.jsonl'),
