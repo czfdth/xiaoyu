@@ -1,0 +1,195 @@
+{
+  "note": "她的定时行为。bin/tasks.ps1 -Install 会为每条生成 bin/tasks/<name>.cmd 并注册/更新计划任务。",
+  "tasks": [
+    {
+      "name": "xiaoyu-reminder",
+      "script": "reminder-dispatch.mjs",
+      "log": "reminder-dispatch.log",
+      "mode": "interval",
+      "everyMinutes": 1
+    },
+    {
+      "name": "xiaoyu-silent-guard",
+      "script": "silent-guard.mjs",
+      "log": "silent-guard.log",
+      "mode": "interval",
+      "everyMinutes": 5
+    },
+    {
+      "name": "xiaoyu-proactive",
+      "script": "proactive-nudge.mjs",
+      "log": "proactive.log",
+      "mode": "interval",
+      "everyMinutes": 10
+    },
+    {
+      "name": "xiaoyu-qzone",
+      "script": "qzone-auto.mjs",
+      "log": "qzone-auto.log",
+      "mode": "interval",
+      "everyMinutes": 30
+    },
+    {
+      "name": "xiaoyu-qzone-watch",
+      "script": "qzone-friend-watch.mjs",
+      "log": "qzone-watch.log",
+      "mode": "interval",
+      "everyMinutes": 30
+    },
+    {
+      "name": "xiaoyu-session-reset",
+      "script": "reset-session.mjs",
+      "log": "reset.log",
+      "mode": "interval",
+      "everyHours": 6
+    },
+    {
+      "name": "xiaoyu-dream",
+      "script": "dream-wake.mjs",
+      "log": "dream-wake.log",
+      "mode": "daily",
+      "time": "04:00"
+    },
+    {
+      "name": "xiaoyu-memory",
+      "script": "extract-memory.mjs",
+      "log": "memory-extract.log",
+      "mode": "daily",
+      "time": "04:40",
+      "args": "{yesterday}"
+    },
+    {
+      "name": "xiaoyu-world",
+      "script": "world-digest.mjs",
+      "log": "world.log",
+      "mode": "daily",
+      "time": "07:30"
+    },
+    {
+      "name": "xiaoyu-morning",
+      "script": "ritual-wake.mjs",
+      "log": "ritual.log",
+      "mode": "daily",
+      "time": "08:00"
+    },
+    {
+      "name": "xiaoyu-anniversary",
+      "script": "check-anniversary.mjs",
+      "log": "anniversary.log",
+      "mode": "daily",
+      "time": "09:00"
+    },
+    {
+      "name": "xiaoyu-life-1",
+      "script": "life-wake.mjs",
+      "log": "life.log",
+      "mode": "daily",
+      "time": "10:30"
+    },
+    {
+      "name": "xiaoyu-life-2",
+      "script": "life-wake.mjs",
+      "log": "life.log",
+      "mode": "daily",
+      "time": "15:00"
+    },
+    {
+      "name": "xiaoyu-life-3",
+      "script": "life-wake.mjs",
+      "log": "life.log",
+      "mode": "daily",
+      "time": "19:30"
+    },
+    {
+      "name": "xiaoyu-memoir",
+      "script": "memoir-wake.mjs",
+      "log": "memoir.log",
+      "mode": "daily",
+      "time": "21:30"
+    },
+    {
+      "name": "xiaoyu-night",
+      "script": "ritual-wake.mjs",
+      "log": "ritual.log",
+      "mode": "daily",
+      "time": "22:30"
+    },
+    {
+      "name": "xiaoyu-cost",
+      "script": "cost-report.mjs",
+      "log": "cost-report.log",
+      "mode": "daily",
+      "time": "23:00"
+    },
+    {
+      "name": "xiaoyu-tool-report",
+      "script": "report-tool-usage.mjs",
+      "log": "tool-usage.log",
+      "mode": "daily",
+      "time": "23:05"
+    },
+    {
+      "name": "xiaoyu-backup",
+      "ps": "bin/backup.ps1",
+      "log": "backup.log",
+      "mode": "daily",
+      "time": "04:50"
+    },
+    {
+      "name": "xiaoyu-asr-start",
+      "ps": "bin/asr-start.ps1",
+      "log": "asr-start.log",
+      "mode": "daily",
+      "time": "00:00"
+    },
+    {
+      "name": "xiaoyu-watchdog-guard",
+      "ps": "bin/watchdog-guard.ps1",
+      "log": "watchdog-guard.log",
+      "mode": "interval",
+      "everyMinutes": 5
+    },
+    {
+      "name": "xiaoyu-birthday",
+      "script": "anniversary-wake.mjs",
+      "log": "anniversary-wake.log",
+      "mode": "daily",
+      "time": "09:05"
+    },
+    {
+      "name": "xiaoyu-chronicle",
+      "script": "chronicle.mjs",
+      "log": "chronicle.log",
+      "mode": "daily",
+      "time": "23:30"
+    },
+    {
+      "name": "xiaoyu-growth",
+      "script": "grow-role.mjs",
+      "log": "growth.log",
+      "mode": "daily",
+      "time": "00:10"
+    },
+    {
+      "name": "xiaoyu-backup-offsite",
+      "script": "backup-offsite.mjs",
+      "log": "backup-offsite.log",
+      "mode": "daily",
+      "time": "05:05"
+    },
+    {
+      "name": "xiaoyu-restore-drill",
+      "script": "restore-drill.mjs",
+      "log": "restore-drill.log",
+      "mode": "daily",
+      "time": "05:35"
+    },
+    {
+      "name": "xiaoyu-backup-key-escrow",
+      "script": "backup-key-escrow.mjs",
+      "log": "backup-key-escrow.log",
+      "mode": "daily",
+      "time": "05:45"
+    }
+  ]
+}
