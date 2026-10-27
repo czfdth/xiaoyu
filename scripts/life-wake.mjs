@@ -16,11 +16,20 @@ if (status.mode !== 'reserved2' || status.socialV2Paused || !status.dshReady) {
   process.exit(0);
 }
 
+const stateResponse=await fetch(base+'/api/socialV2/state?key='+encodeURIComponent(`private:${OWNER}`),{headers:{'x-console-token':tok},signal:AbortSignal.timeout(10000)});
+if(!stateResponse.ok)throw new Error('独立目标状态查询失败');
+const state=await stateResponse.json();
+let reason='life';
+if(state.agency?.hasGoals){
+  if(!state.agency.next){console.log('skip: '+(state.agency.hold||'当前目标暂不可推进'));process.exit(0);}
+  reason=state.agency.next.kind;
+}
+
 const r = await fetch(base + '/api/socialV2/wake', {
   method: 'POST',
   signal: AbortSignal.timeout(10000),
   headers: { 'x-console-token': tok, 'content-type': 'application/json' },
-  body: JSON.stringify({ key: `private:${OWNER}`, reason: 'life' })
+  body: JSON.stringify({ key: `private:${OWNER}`, reason })
 });
 const result = await r.json();
 if (!r.ok || !result.ok || !result.accepted) throw new Error(`生活唤醒未被接受 HTTP ${r.status}`);

@@ -28,6 +28,7 @@ const NAV = [
   { to: '/life', icon: 'life', label: '一生' },
   { to: '/memory', icon: 'book', label: '记忆' },
   { to: '/tools', icon: 'spark', label: '工具' },
+  { to: '/spend', icon: 'coin', label: '花费' },
   { to: '/persona', icon: 'id', label: '人格卡' },
   { to: '/config', icon: 'gear', label: '配置' },
   { to: '/logs', icon: 'terminal', label: '日志' },

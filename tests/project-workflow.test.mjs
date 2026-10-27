@@ -32,7 +32,7 @@ test('没有作品不能跳检查和归档，自检不冒充用户认可',t=>{
   assert.throws(()=>f.change({action:'review',verdict:'accept',note:'不错'}),/实际草稿/);
   f.change({action:'attach',evidencePath:f.image('v1.png')});
   assert.throws(()=>f.change({action:'review',verdict:'accept'}),/具体理由/);
-  const review=f.change({action:'review',verdict:'accept',note:'构图清楚、主体完整，颜色符合选题'});
+  const review=f.change({action:'review',verdict:'accept',note:'构图清楚、主体完整，颜色符合选题',checks:[{id:'c1',passed:true,note:'实际检查主体构图和要求'}]});
   assert.equal(review.task.versions[0].review.kind,'agent_self_review');
   assert.equal(review.done,8);
 });
@@ -47,7 +47,7 @@ test('修改保留每一版和用户原话；完成归档只计一次，重读�
   assert.match(projectHint(projectView(f.file,f.key)),/放大尾巴/);
   assert.throws(()=>f.change({action:'attach',evidencePath:'images/v1.png'}),/同一件作品/);
   f.change({action:'attach',evidencePath:f.image('v2.png',1)});
-  f.change({action:'review',verdict:'accept',note:'第二版尾巴比例已经调整，主体完整'});
+  f.change({action:'review',verdict:'accept',note:'第二版尾巴比例已经调整，主体完整',checks:[{id:'c1',passed:true,note:'实际检查主体构图和要求'},{id:'message:2',passed:true,note:'实际检查主体构图和要求'}]});
   f.change({action:'archive'});f.change({action:'archive',taskId:start.task.id});
   const p=readJson(f.file).items[0];assert.equal(p.done,9);assert.equal(p.artifacts.length,1);
   assert.equal(p.workflow.tasks[0].versions.length,2);assert(fs.existsSync(path.join(f.root,'images/v1.png')));
@@ -91,7 +91,7 @@ test('图片被覆盖或是伪图片时拒绝归档，失败不增加进度',t=>
   const f=setup(t);f.change({action:'start',brief:'鱼'});
   fs.mkdirSync(path.join(f.root,'images'));fs.writeFileSync(path.join(f.root,'images/fake.png'),'not an image');
   assert.throws(()=>f.change({action:'attach',evidencePath:'images/fake.png'}),/图片/);
-  f.change({action:'attach',evidencePath:f.image('ok.png')});f.change({action:'review',verdict:'accept',note:'检查主体与构图'});
+  f.change({action:'attach',evidencePath:f.image('ok.png')});f.change({action:'review',verdict:'accept',note:'检查主体与构图',checks:[{id:'c1',passed:true,note:'实际检查主体构图和要求'}]});
   fs.appendFileSync(path.join(f.root,'images/ok.png'),'changed');
   assert.throws(()=>f.change({action:'archive'}),/图片已变化/);
   assert.equal(readJson(f.file).items[0].done,8);
@@ -99,7 +99,7 @@ test('图片被覆盖或是伪图片时拒绝归档，失败不增加进度',t=>
 
 test('归档与交付分开；需要匹配作品哈希，跨会话不能改流程',t=>{
   const f=setup(t);f.change({action:'start',brief:'鱼'});f.change({action:'attach',evidencePath:f.image('v1.png')});
-  f.change({action:'review',verdict:'accept',note:'主体和画面完整'});const archived=f.change({action:'archive'});
+  f.change({action:'review',verdict:'accept',note:'主体和画面完整',checks:[{id:'c1',passed:true,note:'实际检查主体构图和要求'}]});const archived=f.change({action:'archive'});
   assert.equal(archived.task.delivery,undefined);
   f.context.messages.push({messageId:'wrong',isSelf:true,time:f.context.now+1,artifactHashes:['bad']});
   assert.throws(()=>f.change({action:'deliver',deliveredMessageId:'wrong'}),/匹配/);
@@ -115,4 +115,15 @@ test('页面推进优先于随机闲聊，但半小时内不反复唤醒',()=>{
   const work={id:'page1',stage:'generate'};
   assert.equal(proactiveDecision({status,state,now,random:1,work}).reason,'project');
   assert.equal(proactiveDecision({status,state,now,random:0,work,counter:{lastProjectId:'page1',lastProjectWakeAt:now-1000}}).ok,false);
+});
+
+test('操作台授权有独立来源，模型输入不能冒充用户确认',t=>{
+ const f=setup(t);f.change({action:'start',brief:'书桌'});
+ for(let i=0;i<3;i++){f.change({action:'block',note:'连接失败'});if(i<2){f.context.now+=1800001;f.change({action:'resume'});}}
+ assert.throws(()=>f.change({action:'resume',operatorReason:'模型自行决定'}),/用户/);
+ f.context.operatorConfirmation={reason:'用户在操作台要求换方法继续'};
+ const resumed=f.change({action:'resume'});
+ assert.equal(resumed.task.stage,'generate');
+ assert.equal(resumed.task.operatorConfirmations[0].source,'authenticated_operator');
+ assert.equal(resumed.task.history.filter(h=>h.action==='block').length,3);
 });

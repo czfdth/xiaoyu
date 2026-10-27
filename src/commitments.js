@@ -127,6 +127,7 @@ export function changeCommitment(file, memoryFile, key, ownerQQ, input, context)
 
 export function commitmentHint(items) {
   const open = items.filter(e => !['completed','cancelled'].includes(e.status)).slice(0, 6);
+  if (!open.length) return '\n【约定与待办】没有未结约定；明确答应后凭实际原话用 qq_commitments 登记，完成需核验。\n';
   return '\n【约定与待办】答应具体事情后，用成功发出的原话消息 ID 调用 qq_commitments 登记；没有明确答应不要自动立约。\n' + open.map(e => `${e.id} [${e.status}] ${e.text}${e.dueAt ? ' 到期:' + new Date(e.dueAt).toISOString() : ''}${e.condition ? ' 条件:' + e.condition : ''}`).join('\n')
     + '\n用 qq_commitments 接续或更新；needs_review 是未核实旧摘要，不要当作失约或直接催办。完成以工具与交付证据为准，受阻要记录原因，不能只口头说完成。\n';
 }

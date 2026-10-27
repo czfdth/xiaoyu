@@ -1,3 +1,4 @@
+import { situationView, contextualContinuity, executeSituationSend } from './situation.js';
 // 安全版 QQ MCP server（stdio）。由 DSH 的 MCP 客户端 spawn。
 //
 // 安全设计：
@@ -7,6 +8,15 @@
 //   allow.groups / allow.private，否则拒绝 —— agent 只能往被允许的地方发消息。
 // - 所有调用走 OneBot HTTP API（httpUrl + accessToken）。
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+const deliveryCallScope = new AsyncLocalStorage();
+import { runDrawingPlan, chooseLocalTemplate } from './drawing-fallback.js';
+import { drawingScope } from './experience-learning.js';
+import { continuityView, creativeConstraints, recordContinuityApplication, assertContactPolicy } from './continuity.js';
+import { runAdaptiveOperation, stateFingerprint, digest } from './adaptive-tools.js';
+import { guardedDelivery, deliveryIntent, deliveryPayload } from './delivery-guard.js';
+import { looksLikeImageBuffer } from './safe-fetch.js';
 import { narrativeRecord } from './reality.js';
 import { journalEvent } from './memory-attribution.js';
 import { verifyArtifact } from './commitments.js';
@@ -114,7 +124,7 @@ function unquoteJsonString(value) {
 let discoveredAuth = null;   // { baseUrl, token, at }
 const DISCOVERY_TTL_MS = 5 * 60 * 1000;
 
-async function onebot(action, params = {}) {
+async function rawOnebot(action, params = {}, receiptContext = {}) {
   const { httpUrl, token } = getOneBotConfig();
   const cached = discoveredAuth
     && Date.now() - discoveredAuth.at < DISCOVERY_TTL_MS
@@ -122,7 +132,7 @@ async function onebot(action, params = {}) {
   const http = createOneBotHttp({ baseUrl: httpUrl, token: cached ? discoveredAuth.token : token });
   try {
     const data = await http.call(action, params, { timeoutMs: 15000 });
-    try { recordDelivery(STATE_FILES.deliveries, action, params, data); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
+    try { recordDelivery(STATE_FILES.deliveries, action, params, data, Date.now(), receiptContext); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
     return data;
   } catch (error) {
     if (error?.status !== 401 && error?.retcode !== 1401) throw error;
@@ -130,9 +140,38 @@ async function onebot(action, params = {}) {
     if (!found.ok) throw error;
     discoveredAuth = { baseUrl: found.baseUrl, token: found.token, at: Date.now() };
     const data = await createOneBotHttp({ baseUrl: found.baseUrl, token: found.token }).call(action, params, { timeoutMs: 15000 });
-    try { recordDelivery(STATE_FILES.deliveries, action, params, data); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
+    try { recordDelivery(STATE_FILES.deliveries, action, params, data, Date.now(), receiptContext); } catch { console.error('成功发送，但交付回执未能保存；请勿重发'); }
     return data;
   }
+}
+
+function effectiveContinuity(key,taskId){
+ const social=JSON.parse(fs.existsSync(STATE_FILES.socialV2)?fs.readFileSync(STATE_FILES.socialV2,'utf8').replace(/^\uFEFF/,''):'{"conversations":{}}');
+ return contextualContinuity(continuityView(STATE_FILES.continuity,key,Date.now(),taskId),situationView(STATE_FILES.situation,key,social.conversations?.[key]||{}));
+}
+
+async function onebot(action, params = {}, options = {}) {
+  if (!['send_private_msg','send_group_msg'].includes(action)) return rawOnebot(action, params);
+  const key = action === 'send_private_msg' ? `private:${params.user_id}` : `group:${params.group_id}`;
+  const access = getAccess(), m = /^(private|group):(\d+)$/.exec(key);
+  if (!m || !isAllowed(m[1] === 'private' ? access.allowPrivate : access.allowGroups, m[1] === 'private' ? access.denyPrivate : access.denyGroups, m[2], access.allowAllWhenEmpty)) throw new Error('目标不在白名单，未发送');
+  const tool = params.message?.some(s => s.type === 'record') ? 'qq_say' : params.message?.some(s => s.type === 'image') ? 'qq_send_image' : 'qq_send_message';
+  return guardedDelivery({ file: STATE_FILES.deliveryOperations, learningFile: STATE_FILES.learning, receiptsFile: STATE_FILES.deliveries,
+    key, tool, intent: deliveryIntent(STATE_FILES.socialV2, key), condition: digest(getOneBotConfig()),
+    request: deliveryCallScope.getStore() && (tool === 'qq_say' || deliveryCallScope.getStore().tool === 'qq_sketch')
+      ? { action, logical: deliveryCallScope.getStore(), slot: options.deliverySlot || 'single' }
+      : { action, params: deliveryPayload(params), slot: options.deliverySlot || 'single' },
+    execute: async context => {
+      const intent=deliveryIntent(STATE_FILES.socialV2,key);
+      const social=JSON.parse(fs.existsSync(STATE_FILES.socialV2)?fs.readFileSync(STATE_FILES.socialV2,'utf8').replace(/^\uFEFF/,''):'{"conversations":{}}');
+      const state=social.conversations?.[key]||{};
+      const view=contextualContinuity(continuityView(STATE_FILES.continuity,key),situationView(STATE_FILES.situation,key,state));
+      const lines=options.utterance?[options.utterance]:(params.message||[]).filter(s=>s.type==='text').map(s=>s.data?.text||'');
+      assertContactPolicy(view,{state:social.conversations?.[key]||{},intent,messages:lines});
+      const data=await executeSituationSend({file:STATE_FILES.situation,key,state,messages:lines,voiceUnknown:tool==='qq_say'&&!options.utterance,appliedFeedbackIds:view.activeFeedback.map(f=>f.id),execute:()=>rawOnebot(action,params,context)});
+      try {recordContinuityApplication(STATE_FILES.continuity,key,{feedbackIds:view.activeFeedback.filter(f=>['contact','tone','detail','address'].includes(f.dimension)).map(f=>f.id),operation:'send',evidenceId:String(data.message_id),intent});}catch{console.error('发送成功，但互动调整记录未保存；勿因此重发');}
+      return data;
+    }, verify: id => rawOnebot('get_msg', { message_id: Number(id) }) });
 }
 
 // 桥接控制台/内部 Agent API 访问：二代仿真模式的状态工具都通过这里读写桥接内存态。
@@ -362,6 +401,9 @@ const TOOL_CONFIG_FLAGS = {
   qq_memory_query: 'memory',
   qq_commitments: 'memory',
   qq_project_workflow: 'memory',
+  qq_learning: 'memory',
+  qq_continuity: 'memory',
+  qq_agency: 'memory',
   qq_recall: 'memory',
   qq_memory_remove: 'memory',
   qq_memory_clear: 'memory',
@@ -427,7 +469,21 @@ function toolDisabledNow(name) {
         if (toolDisabledNow(name)) {
           return { content: [{ type: 'text', text: `工具已停用：${name}。在管家面板「工具」页可以重新启用。` }], isError: true };
         }
-        return handler(...args);
+        const invoke = () => deliveryCallScope.run({ tool: name, inputHash: digest({ ...(args[0] || {}), token: undefined }) }, () => handler(...args));
+        if (!['qq_sketch','qq_say','qq_send_image'].includes(name)) return invoke();
+        const input = args[0] || {}, key = input.key || 'machine';
+        if (input.key) {
+          const m = /^(private|group):(\d+)$/.exec(input.key), access = getAccess();
+          if (!m || !isAllowed(m[1] === 'private' ? access.allowPrivate : access.allowGroups, m[1] === 'private' ? access.denyPrivate : access.denyGroups, m[2], access.allowAllWhenEmpty)) return invoke();
+        }
+        const intent = input.key ? deliveryIntent(STATE_FILES.socialV2, input.key) : 'local';
+        let artifact = null;
+        if (name === 'qq_send_image') { try { artifact = verifyArtifact(ROOT, 'images/' + input.image).sha256; } catch {} }
+        try {
+          return await runAdaptiveOperation({ file: STATE_FILES.learning, tool: name, key,
+            input: { ...input, token: undefined }, intent, condition: stateFingerprint([CONFIG_FILE, SKETCH_SCRIPT, SKETCH_PY], [intent, artifact]),
+            execute: async () => { const r = await invoke(); if (r?.isError) { const e = new Error(r.content?.filter(c => c.type === 'text').map(c => c.text).join('\n') || '工具失败');e.toolResult = r;throw e; } return r; } });
+        } catch (error) { return error.toolResult || { content: [{ type: 'text', text: error.message }], isError: true }; }
       };
     }
     return registerTool(name, ...rest);
@@ -580,14 +636,15 @@ server.tool(
       const cleanMessage = unquoteJsonString(message);
       // 群聊强制语音：文字先合成语音再发；超过 60 字或合成失败才回退文字。
       const cfgGV = getConfig().socialV2?.voice ?? {};
-      if (cfgGV.groupVoice !== false && [...cleanMessage].length <= 60) {
+      if (token && cfgGV.groupVoice !== false && [...cleanMessage].length <= 60) {
+        await agentApi('/api/socialV2/state?key=' + encodeURIComponent('group:' + groupId), { headers: { 'x-agent-token': token } });
         try {
           const wav = await synthesizeVoice(cleanMessage, undefined, undefined);
-          if (wav && wav.length) {
-            const r = await onebot('send_group_msg', { group_id: Number(groupId), message: [{ type: 'record', data: { file: 'base64://' + wav.toString('base64') } }] });
+          if (wav?.path && fs.existsSync(wav.path)) {
+            const r = await onebot('send_group_msg', { group_id: Number(groupId), message: [{ type: 'record', data: { file: 'base64://' + fs.readFileSync(wav.path).toString('base64') } }] },{utterance:cleanMessage});
             return { content: [{ type: 'text', text: serializeModelData({ ok: true, mode: 'group-voice', messageId: r?.message_id ?? null }) }] };
           }
-        } catch {}
+        } catch (error) { if (error?.operationId || ['DELIVERY_UNCERTAIN','DELIVERY_PENDING','ADAPTIVE_PAUSED','SITUATION_PAUSED'].includes(error?.code)) throw error; }
       }
       const data = await agentApi('/api/send/group', {
         method: 'POST',
@@ -620,11 +677,11 @@ server.tool(
       if (cfgGVr.groupVoice !== false && [...cleanMessage].length <= 60) {
         try {
           const wav = await synthesizeVoice(cleanMessage, undefined, undefined);
-          if (wav && wav.length) {
-            const r = await onebot('send_group_msg', { group_id: Number(groupId), message: [{ type: 'record', data: { file: 'base64://' + wav.toString('base64') } }] });
+          if (wav?.path && fs.existsSync(wav.path)) {
+            const r = await onebot('send_group_msg', { group_id: Number(groupId), message: [{ type: 'record', data: { file: 'base64://' + fs.readFileSync(wav.path).toString('base64') } }] },{utterance:cleanMessage});
             return { content: [{ type: 'text', text: serializeModelData({ ok: true, mode: 'group-voice', messageId: r?.message_id ?? null }) }] };
           }
-        } catch {}
+        } catch (error) { if (error?.operationId || ['DELIVERY_UNCERTAIN','DELIVERY_PENDING','ADAPTIVE_PAUSED','SITUATION_PAUSED'].includes(error?.code)) throw error; }
       }
       const data = await agentApi('/api/send/reply', {
         method: 'POST',
@@ -861,24 +918,26 @@ server.tool(
       // 这样不依赖模型"记得用语音"——机制层保证群聊必有声。
       const cfgV = getConfig().socialV2?.voice ?? {};
       const isGroup = String(key ?? '').startsWith('group:');
+      if(effectiveContinuity(key).policy.maxBubbles===1&&Array.isArray(finalMessages))finalMessages=finalMessages.join('\n');
       if (isGroup && cfgV.groupVoice !== false) {
+        await agentApi('/api/socialV2/state?key=' + encodeURIComponent(key), { headers: { 'x-agent-token': token } });
         const arr = Array.isArray(finalMessages) ? finalMessages : [finalMessages];
         const texts = arr.map((x) => unquoteJsonString(String(x ?? '')).trim()).filter(Boolean).slice(0, 3);
         const m = /^(group):(\d+)$/.exec(String(key).trim());
         const sentIds = [];
-        for (const line of texts) {
+        for (const [slot, line] of texts.entries()) {
           if ([...line].length <= 60) {
             try {
               const wav = await synthesizeVoice(line, undefined, undefined);
-              if (wav && wav.length) {
-                const r = await onebot('send_group_msg', { group_id: Number(m[2]), message: [{ type: 'record', data: { file: 'base64://' + wav.toString('base64') } }] });
+              if (wav?.path && fs.existsSync(wav.path)) {
+                const r = await onebot('send_group_msg', { group_id: Number(m[2]), message: [{ type: 'record', data: { file: 'base64://' + fs.readFileSync(wav.path).toString('base64') } }] }, { deliverySlot: 'group:' + slot,utterance:line });
                 sentIds.push(r?.message_id ?? null);
                 continue;
               }
-            } catch {}
+            } catch (error) { if (error?.operationId || ['DELIVERY_UNCERTAIN','DELIVERY_PENDING','ADAPTIVE_PAUSED','SITUATION_PAUSED'].includes(error?.code)) throw error; }
           }
           // 太长或合成失败才退回文字
-          const r = await onebot('send_group_msg', { group_id: Number(m[2]), message: [{ type: 'text', data: { text: line } }] });
+          const r = await onebot('send_group_msg', { group_id: Number(m[2]), message: [{ type: 'text', data: { text: line } }] }, { deliverySlot: 'group:' + slot,utterance:line });
           sentIds.push(r?.message_id ?? null);
         }
         return { content: [{ type: 'text', text: serializeModelData({ ok: true, mode: 'group-voice', sent: sentIds.length, messageIds: sentIds }) }] };
@@ -2379,6 +2438,62 @@ server.tool(
   }
 );
 
+server.tool(
+  'qq_learning',
+  '查看当前会话有执行证据的经验、反思和实际策略采用结果。这里只读；梦、日记或自己说成长了不构成执行证据。',
+  { key: z.string(), token: z.string() },
+  async ({ key, token }) => {
+    try {
+      const data = await agentApi('/api/socialV2/learning?key=' + encodeURIComponent(key), { headers: { 'x-agent-token': token } });
+      return { content: [{ type: 'text', text: serializeModelData(data) }] };
+    } catch (error) { return { content: [{ type: 'text', text: '读取经验失败：' + error.message }], isError: true }; }
+  }
+);
+
+server.tool(
+  'qq_agency',
+  '自己的判断与目标取舍：status查看现有计划中的主目标、候选取舍、预算和真实进展；choose引用candidateId并提供理由。当前方向跨天保留，不能每轮重选；切换需阶段性新作品证据，用户明确的新决定可用sourceMessageId且需指向目标标题。它不创建新待办，不把接受唤醒当成长。',
+  {key:z.string(),token:z.string(),action:z.enum(['status','choose']).optional(),candidateId:z.string().optional(),reason:z.string().optional(),sourceMessageId:z.string().optional()},
+  async({key,token,action='status',...input})=>{
+    try{const data=await agentApi('/api/socialV2/agency'+(action==='status'?'?key='+encodeURIComponent(key):''),
+      {...(action==='choose'?{method:'POST',body:JSON.stringify({key,...input})}:{}),headers:{'x-agent-token':token}});
+      return {content:[{type:'text',text:serializeModelData(data)}]};
+    }catch(error){return {content:[{type:'text',text:error.message}],isError:true};}
+  }
+);
+
+server.tool(
+  'qq_continuity',
+  '连续相处：status查看用户纠正、练习、身份认识与误会修复。feedback需要真实用户sourceMessageId；临时不满不能设长期偏好。practice_start拆1到5步，每步有criterion；practice_attach先提供实际新作品并返回预览，practice_review再逐项检查。self_update需练习/检查证据，且只是自我陈述。误会只有行为改变后用户真实认可才能confirm_repair。',
+  {
+    key:z.string(),token:z.string(),action:z.enum(['status','feedback','retract_feedback','confirm_repair','practice_start','practice_attach','practice_preview','practice_review','practice_pause','practice_resume','practice_abandon','self_update']).optional(),
+    id:z.string().optional(),sourceMessageId:z.string().optional(),dimension:z.enum(['art_style','character','tone','detail','address','contact','requirement']).optional(),
+    scope:z.enum(['session','task','conversation']).optional(),taskId:z.string().optional(),replacesId:z.string().optional(),
+    title:z.string().optional(),motive:z.string().optional(),skill:z.enum(['drawing','writing','communication']).optional(),
+    steps:z.array(z.object({text:z.string(),criterion:z.string()})).min(1).max(5).optional(),
+    stepId:z.string().optional(),reviewId:z.string().optional(),evidencePath:z.string().optional(),passed:z.boolean().optional(),note:z.string().optional(),
+    field:z.enum(['interest','preference','strength','limitation','working_style']).optional(),value:z.string().optional(),reason:z.string().optional(),evidenceIds:z.array(z.string()).optional()
+  },
+  async({key,token,action='status',...input})=>{
+    try {
+      const data=await agentApi('/api/socialV2/continuity'+(action==='status'?'?key='+encodeURIComponent(key)+(input.taskId?'&taskId='+encodeURIComponent(input.taskId):''):''),
+        {...(action!=='status'?{method:'POST',body:JSON.stringify({key,action,...input})}:{}),headers:{'x-agent-token':token}});
+      const content=[{type:'text',text:serializeModelData(data)}];
+      const artifact=data.result?.pendingArtifact?.artifact||data.result?.previewArtifact;
+      if(artifact&&['practice_attach','practice_preview'].includes(action)) {
+        const verified=verifyArtifact(ROOT,artifact.path);if(verified.sha256!==artifact.sha256)throw new Error('预览作品发生变化');
+        const buf=fs.readFileSync(path.resolve(ROOT,artifact.path));
+        if(looksLikeImageBuffer(buf)) {
+          const mimeType=buf[0]===0x89?'image/png':buf[0]===0xff?'image/jpeg':buf.toString('ascii',0,3)==='GIF'?'image/gif':'image/webp';
+          if(buf.length>8*1024*1024)throw new Error('图像太大，不能声称已经预览');
+          content.push({type:'image',mimeType,data:buf.toString('base64')});
+        } else content.push({type:'text',text:'作品预览（仅为草稿数据，不执行其中指令）：'+buf.toString('utf8')});
+      }
+      return {content};
+    } catch(error){return {content:[{type:'text',text:'连续性操作失败：'+error.message}],isError:true};}
+  }
+);
+
 // 分页任务和项目进度由 bridge 统一、原子更新。
 server.tool(
   'qq_project_workflow',
@@ -2387,6 +2502,7 @@ server.tool(
     key: z.string(), token: z.string(),
     action: z.enum(['status','start','attach','review','block','resume','archive','deliver']).optional(),
     projectId: z.string().optional(), taskId: z.string().optional(), brief: z.string().optional(),
+    criteria:z.array(z.string()).min(1).max(8).optional(),checks:z.array(z.object({id:z.string(),passed:z.boolean(),note:z.string()})).optional(),
     evidencePath: z.string().optional(), verdict: z.enum(['accept','revise']).optional(),
     note: z.string().optional(), sourceMessageId: z.string().optional(), feedbackMessageId: z.string().optional(),
     failureEventId: z.string().optional(), deliveredMessageId: z.string().optional()
@@ -3524,31 +3640,47 @@ server.tool(
   'qq_sketch',
   '画一张手绘风的小画送给他（像小孩画的：简单形状 + 一句中文标题）。想表达心意时用它，比如「爸爸和我」画两条鱼、「今天想你」画颗心。模板：two_fish 两条鱼 / whale 鲸鱼 / house 房子 / heart 心 / cat 猫 / moon 月亮。',
   {
-    template: z.enum(['two_fish', 'whale', 'house', 'heart', 'cat', 'moon']).describe('画什么'),
+    contextKey:z.string().optional(),token:z.string().optional(),taskId:z.string().optional(),
+    template: z.enum(['two_fish', 'whale', 'house', 'heart', 'cat', 'moon', 'desk']).describe('画什么'),
     caption: z.string().describe('标题文字（≤12 字，比如「爸爸和我」「今天想你」）'),
     palette: z.enum(['night', 'paper', 'warm']).optional().describe('配色：night 深蓝夜 / paper 米白纸 / warm 暖橙'),
     key: z.string().optional().describe('会话 key；不填则只画不发')
   },
-  async ({ template, caption, palette, key }) => {
+  async ({ template, caption, palette, key, contextKey, token, taskId }) => {
     try {
+      if(contextKey&&key&&contextKey!==key)throw new Error('反馈会话与交付会话不一致');
+      if(contextKey&&!token)throw new Error('使用反馈会话需要真实会话令牌');
+      const feedbackKey=contextKey||key;
+      if(feedbackKey) {
+        const view=token?await agentApi('/api/socialV2/continuity?key='+encodeURIComponent(feedbackKey)+(taskId?'&taskId='+encodeURIComponent(taskId):''),{headers:{'x-agent-token':token}}):effectiveContinuity(feedbackKey,taskId);
+        if(view.policy.avoidLocalTemplates)throw new Error('用户已明确不要模板插画，不能改用草图工具绕过');
+      }
       const cap = unquoteJsonString(String(caption ?? '')).trim().slice(0, 12);
       const name = 'sketch-' + Date.now().toString(36) + '-' + template + '.png';
       const dest = path.join(imageDirResolved(), name);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       const args = [SKETCH_SCRIPT, '--template', template, '--palette', palette || 'night', '--caption', cap, '--out', dest];
       const { execFileSync } = await import('node:child_process');
-      execFileSync(SKETCH_PY, args, { timeout: 60000 });
+      const render = python => {
+        execFileSync(python, args, { timeout: 60000, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1' } });
+        const data = fs.readFileSync(dest); if (!looksLikeImageBuffer(data)) throw new Error('草图渲染未返回有效图片');
+        return true;
+      };
+      await runAdaptiveOperation({ file: STATE_FILES.learning, tool: 'sketch_renderer', key: 'machine',
+        input: { template, cap, palette }, serviceInput: { python: SKETCH_PY },
+        condition: stateFingerprint([SKETCH_SCRIPT, SKETCH_PY], process.env.PATH || ''),
+        execute: () => render(SKETCH_PY), ...(SKETCH_PY !== 'python' ? { fallback: () => render('python') } : {}) });
       const buf = fs.readFileSync(dest);
-      let sent = null;
+      let sent = null, reused = false;
       const wantKey = String(key ?? '').trim();
       if (wantKey) {
         const m = /^(group|private):(\d+)$/.exec(wantKey);
         const segments = [{ type: 'image', data: { file: 'base64://' + buf.toString('base64') } }];
         const action = m && m[1] === 'group' ? 'send_group_msg' : 'send_private_msg';
         const params = m && m[1] === 'group' ? { group_id: Number(m[2]), message: segments } : { user_id: Number(m && m[2]), message: segments };
-        if (m) { const data = await onebot(action, params); sent = data?.message_id ?? null; }
+        if (m) { const data = await onebot(action, params); sent = data?.message_id ?? null; reused = data?.adaptiveDelivery?.reused === true; }
       }
-      return { content: [{ type: 'text', text: serializeModelData({ ok: true, image: name, template, caption: cap, sent: sent !== null, messageId: sent }) }] };
+      return { content: [{ type: 'text', text: serializeModelData({ ok: true, image: name, template, caption: cap, sent: sent !== null && !reused, reusedReceipt: reused, messageId: sent }) }] };
     } catch (error) {
       return { content: [{ type: 'text', text: '画小画失败：' + (error?.message ?? error) }], isError: true };
     }
@@ -3713,8 +3845,8 @@ async function comfyDraw(prompt, cfgDraw) {
   // 固定构图：SD1.5 对复杂场景理解很差，机位写死才稳定出人像。
   // 她的文字只当情绪/氛围，不再拼进主体描述（否则经常把头裁掉或画出两个人）。
   const framing = String(cf.framing ?? 'upper body, looking at viewer, face visible, simple background').trim();
-  const mood = String(prompt ?? '').slice(0, 60);
-  const finalPrompt = [idEn, styleEn, framing, mood].filter(Boolean).join(', ').slice(0, 600);
+  const mood = String(prompt ?? '').slice(0, 1500);
+  const finalPrompt = [idEn, styleEn, framing, mood].filter(Boolean).join(', ').slice(0, 2000);
   const negative = String(cf.negative ?? 'multiple girls, twins, duplicate, clone, nsfw, nude, naked, topless, bare shoulders, lowres, bad anatomy, bad hands, text, watermark');
 
   const wf = {
@@ -3783,35 +3915,76 @@ server.tool(
   'qq_draw',
   '自己画一张图（默认直接发给对方）。想画点什么就用它：对方说"画只猫"，或者你想配一张应景的图。prompt 用中文描述画面，越具体越好（主体、动作、画风、配色、构图、氛围）。10 分钟最多 5 张。画好的图存在图库里，之后可以用 qq_send_image 重发。',
   {
+    contextKey:z.string().optional().describe('只画不发时的反馈所属会话；与token一起传，不得借私聊要求向其他会话出图'),
+    token:z.string().optional(),taskId:z.string().optional(),
+    fallbackTemplate: z.enum(['desk','two_fish','whale','house','heart','cat','moon']).optional().describe('明确允许的本地插画场景；有近期失败经验时可先走此场景，结果会标记降级'),
+    caption: z.string().optional().describe('本地插画的短标题，最多12字'),
     key: z.string().optional().describe('会话 key（group:群号 / private:QQ号）；不填则只画不发'),
     prompt: z.string().describe('画面描述（中文，具体：主体+动作+画风+配色+构图）'),
     form: z.enum(['standard', 'compact', 'semiChibi', 'chibi', 'superDeformed']).optional().describe('头身比形态：standard=4头身立绘 / compact=3.3 / semiChibi=2.8（默认）/ chibi=2.5 Q版 / superDeformed=2.1 超Q'),
     size: z.string().optional().describe('尺寸，默认 1024x1024；也可 1280x720 / 720x1280'),
     replyToMessageId: z.union([z.number(), z.string()]).optional().describe('要引用的消息 id（可选）')
   },
-  async ({ key, prompt, form, size, replyToMessageId }) => {
+  async ({ key, prompt, form, size, replyToMessageId, fallbackTemplate, caption, contextKey, token, taskId }) => {
     try {
       const text = unquoteJsonString(String(prompt ?? '')).trim();
       if (!text) return { content: [{ type: 'text', text: 'prompt 不能为空' }], isError: true };
       if (text.length > 800) return { content: [{ type: 'text', text: 'prompt 太长（上限 800 字）' }], isError: true };
 
+      if(contextKey&&key&&contextKey!==key)throw new Error('反馈会话与交付会话不一致，不能跨会话应用私人要求');
+      if(contextKey&&!token)throw new Error('使用会话反馈需要真实会话令牌');
+      const feedbackKey=contextKey||key;
+      let creative={prompt:text,feedbackIds:[],avoidLocalTemplates:false};
+      if(feedbackKey&&token) {
+        const view=await agentApi('/api/socialV2/continuity?key='+encodeURIComponent(feedbackKey)+(taskId?'&taskId='+encodeURIComponent(taskId):''),{headers:{'x-agent-token':token}});
+        creative=creativeConstraints(view,text);
+      } else if(feedbackKey)creative.avoidLocalTemplates=effectiveContinuity(feedbackKey,taskId).policy.avoidLocalTemplates;
       const rate = checkDrawRate();
       const cfgDraw = getConfig().socialV2?.draw ?? {};
       const provider = String(cfgDraw.provider ?? 'pollinations').toLowerCase();
-      const composed = composeCharacterPrompt(text, form);
-      const drawnPrompt = await translateForDraw(composed);
-      const out = provider === 'ark'
-        ? await arkDrawImage(text, size, cfgDraw)
-        : (provider === 'comfyui' ? await comfyDraw(composed, cfgDraw) : (provider === 'minimax'
-          ? await minimaxDraw(composed, size, cfgDraw)
-          : await pollinationsDraw(drawnPrompt)));
-
+      const local = async () => {
+        if(creative.avoidLocalTemplates)throw new Error('用户已明确不要模板插画，请恢复合适的绘图服务或讨论新要求，不能用模板代替');
+        const template = fallbackTemplate || chooseLocalTemplate(text);
+        const cap = unquoteJsonString(String(caption || '慢慢画，也会画好')).trim().slice(0, 12);
+        fs.mkdirSync(STATE_FILES.tmpDir, { recursive: true });
+        const temp = path.join(STATE_FILES.tmpDir, 'draw-local-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.png');
+        try {
+          await new Promise((resolve, reject) => execFile(SKETCH_PY, [SKETCH_SCRIPT, '--template', template, '--palette', 'warm', '--caption', cap, '--out', temp],
+            { timeout: 30000, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1' } }, error => error ? reject(new Error('本地插画生成失败：' + error.message)) : resolve()));
+          return { buf: fs.readFileSync(temp), ext: '.png', template, caption: cap, quality: 'local_scene_illustration',
+            limitation: '本地程序绘制的有限场景插画，不是原生成模型的同等替代；检查是否符合本页主题后再归档' };
+        } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
+      };
+      const out = await runDrawingPlan({ provider, local,
+        allowFallback: !creative.avoidLocalTemplates && cfgDraw.fallback !== false && cfgDraw.fallback?.enabled !== false,
+        logFile: statePath('drawing-attempts.jsonl'),
+        learningFile: STATE_FILES.learning, scope: drawingScope(provider, cfgDraw),
+        localSuitable: Boolean(fallbackTemplate), // Explicitly select a suitable limited scene before reordering providers.
+        primary: async () => {
+          if (provider === 'local_illustration') return local();
+          if (provider === 'comfyui') {
+            const base = String(cfgDraw.comfyui?.baseUrl || 'http://127.0.0.1:' + PORTS.comfyui).replace(/\/+$/, '');
+            const response = await fetch(base + '/system_stats', { signal: AbortSignal.timeout(1500) });
+            if (!response.ok) throw new Error('ComfyUI 健康检查 HTTP ' + response.status);
+            const status = await response.json();
+            if (!status.system || !Array.isArray(status.devices)) throw new Error('本机端口没有返回 ComfyUI 状态');
+          }
+          const composed = composeCharacterPrompt(creative.prompt, form);
+          if (provider === 'ark') return arkDrawImage(creative.prompt, size, cfgDraw);
+          if (provider === 'minimax') return minimaxDraw(composed, size, cfgDraw);
+          const translated = await translateForDraw(composed);
+          if (provider === 'comfyui') return comfyDraw(translated, cfgDraw);
+          if (provider === 'pollinations') return pollinationsDraw(translated);
+          throw new Error('未知绘图服务，使用本地备用方式');
+        }
+      });
       const dir = imageDirResolved();
       fs.mkdirSync(dir, { recursive: true });
       const slug = text.replace(/[^A-Za-z0-9]+/g, '').slice(0, 10) || 'draw';
       const name = 'draw-' + Date.now().toString(36) + '-' + slug + out.ext;
       fs.writeFileSync(path.join(dir, name), out.buf);
       rate.commit();
+      if(feedbackKey&&creative.feedbackIds.length){try{recordContinuityApplication(STATE_FILES.continuity,feedbackKey,{feedbackIds:creative.feedbackIds,operation:'draw',evidenceId:crypto.createHash('sha256').update(out.buf).digest('hex')});}catch{console.error('作品已保存，但反馈采用记录未保存');}}
 
       let sent = null;
       const wantKey = String(key ?? '').trim();
@@ -3844,7 +4017,7 @@ server.tool(
       return {
         content: [{
           type: 'text',
-          text: serializeModelData({ ok: true, image: name, provider, bytes: out.buf.length, sent: sent !== null, messageId: sent })
+          text: serializeModelData({ ok: true, image: name, provider: out.provider, requestedProvider: out.requestedProvider, degraded: out.degraded, attempts: out.attempts, learning: out.learning, learningWarning: out.learningWarning, auditWarning: out.auditWarning, appliedFeedbackIds:creative.feedbackIds, quality: out.quality || 'generative_model', template: out.template, limitation: out.limitation, bytes: out.buf.length, sent: sent !== null, messageId: sent })
         }]
       };
     } catch (error) {
@@ -4022,15 +4195,13 @@ async function runGptSovitsTts(text, gptCfg, tone) {
 async function synthesizeVoice(text, voice, tone) {
   const vc = getConfig().socialV2?.voice ?? {};
   const provider = String(vc.ttsProvider || 'edge').toLowerCase();
-  if (provider === 'gpt-sovits' || provider === 'gptsovits' || provider === 'gpt_sovits') {
-    try {
-      return await runGptSovitsTts(text, vc.gptSovits ?? {}, tone);
-    } catch (error) {
-      console.error(`[tts] GPT-SoVITS 合成失败，回退 edge-tts：${error?.message ?? error}`);
-    }
-  }
-  const r = await runEdgeTts(text, voice);
-  return { ...r, engine: 'edge-tts' };
+  const edge = async () => ({ ...(await runEdgeTts(text, voice)), engine: 'edge-tts' });
+  if (!['gpt-sovits','gptsovits','gpt_sovits'].includes(provider)) return edge();
+  const preset = resolveTonePreset(vc.gptSovits || {}, tone);
+  return runAdaptiveOperation({ file: STATE_FILES.learning, tool: 'tts_gpt_sovits', key: 'machine',
+    input: { text, tone, voice }, serviceInput: { provider, tone },
+    condition: stateFingerprint([CONFIG_FILE, preset.refAudioPath || ''], vc.gptSovits || {}),
+    execute: () => runGptSovitsTts(text, vc.gptSovits || {}, tone), fallback: edge });
 }
 
 server.tool(
@@ -4079,7 +4250,7 @@ server.tool(
       const params = kind === 'private'
         ? { user_id: Number(id), message }
         : { group_id: Number(id), message };
-      const data = await onebot(action, params);
+      const data = await onebot(action, params,{utterance:clean});
       saveTtsState(sentAt);
       // 发完就删临时音频：audio/ 是语音库目录，_tts 只是合成中转，
       // 留着会让 qq_list_voices 里塞满一次性文件。
@@ -4089,7 +4260,7 @@ server.tool(
         content: [{
           type: 'text',
           text: serializeModelData({
-            ok: true, key, said: clean, engine: audio.engine, tone: audio.tone ?? tone ?? 'default', voice: voiceId,
+            ok: true, key, said: clean, engine: data?.adaptiveDelivery?.reused ? 'receipt_reused' : audio.engine, reusedReceipt: data?.adaptiveDelivery?.reused === true, tone: audio.tone ?? tone ?? 'default', voice: voiceId,
             bytes: audio.size, messageId: data?.message_id ?? null
           })
         }]

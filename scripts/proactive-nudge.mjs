@@ -5,6 +5,7 @@ import { CONFIG_FILE, STATE_DIR, STATE_FILES } from '../src/paths.js';
 import { readJson, writeJson } from '../src/state-store.js';
 import { runProactive, shanghaiDay } from '../src/autonomy.js';
 import { projectView, nextProjectWork } from '../src/project-workflow.js';
+import { continuityView, nextPracticeWork } from '../src/continuity.js';
 import { listCommitments, dueCommitments } from '../src/commitments.js';
 const log = text => fs.appendFileSync(path.join(STATE_DIR, 'proactive-nudge.log'), `[${new Date().toLocaleString('zh-CN')}] ${text}\n`);
 const lock = path.join(STATE_DIR, 'proactive-run.lock');
@@ -42,7 +43,8 @@ try {
       const key = `private:${cfg.ownerQQ}`;
       const due = dueCommitments(listCommitments(STATE_FILES.commitments, STATE_FILES.longTermMemory, key, cfg.ownerQQ), now);
       const work = nextProjectWork(projectView(STATE_FILES.projects, key), key, now);
-      const result = await runProactive({ key, counter, due, work, now,
+      const practice=nextPracticeWork(continuityView(STATE_FILES.continuity,key),now);
+      const result = await runProactive({ key, counter, due, work, practice, now,
         baseUrl: `http://127.0.0.1:${cfg.consolePort || 3100}`,
         headers: { 'x-console-token': fs.readFileSync(STATE_FILES.consoleToken, 'utf8').trim(), 'content-type': 'application/json' } });
       if (result.accepted) writeJson(file, result.counter);

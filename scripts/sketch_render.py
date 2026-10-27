@@ -107,6 +107,80 @@ def template_moon(d, W, H, pal, rnd):
     d.ellipse([W * 0.62, H * 0.12, W * 0.93, H * 0.43], fill=pal["bg"])
 
 
+def template_desk(d, W, H, pal, rnd):
+    """Offline illustration: a fully clothed whale maid drawing beside a sunset window."""
+    def box(values):
+        return [v * (W if i % 2 == 0 else H) / 1000 for i, v in enumerate(values)]
+    def pts(values):
+        return [(x * W / 1000, y * H / 1000) for x, y in values]
+    line = (49, 65, 101)
+    blue = (76, 133, 196)
+    light = (137, 193, 232)
+    white = (249, 249, 240)
+    skin = (255, 224, 201)
+    stroke = max(2, W // 250)
+    d.rectangle([0, 0, W, H], fill=(247, 240, 224))
+    d.rounded_rectangle(box([68, 160, 405, 615]), radius=W // 35, fill=(224, 209, 186))
+    for y in range(180, 585):
+        t = (y - 180) / 405
+        color = tuple(int(a * (1 - t) + b * t) for a, b in zip((137, 158, 202), (255, 179, 140)))
+        d.line(box([90, y, 385, y]), fill=color, width=max(1, H // 400))
+    d.ellipse(box([180, 350, 300, 470]), fill=(255, 222, 160))
+    for x, y, r in [(110, 510, 150), (240, 530, 150), (315, 500, 120)]:
+        d.ellipse(box([x-r, y, x+r, y+140]), fill=(117, 141, 171))
+    d.rectangle(box([77, 575, 405, 625]), fill=(226, 214, 192))
+    d.rectangle(box([230, 177, 242, 590]), fill=white)
+    d.rectangle(box([85, 365, 388, 375]), fill=white)
+    d.rounded_rectangle(box([83, 176, 390, 592]), radius=W // 60, outline=line, width=stroke)
+    # Long blue hair and a recognisable whale tail behind the desk.
+    d.rounded_rectangle(box([425, 285, 715, 780]), radius=W // 8, fill=blue, outline=line, width=stroke)
+    d.polygon(pts([(660, 745), (810, 650), (885, 620), (856, 700), (935, 745), (844, 764), (777, 711), (715, 791)]), fill=light, outline=line)
+    d.line(pts([(685, 753), (802, 700), (846, 733)]), fill=blue, width=stroke)
+    # Closed-neck dress and apron, partly behind the table.
+    d.rounded_rectangle(box([450, 525, 700, 825]), radius=W // 18, fill=(44, 74, 121), outline=line, width=stroke)
+    d.polygon(pts([(495, 536), (639, 536), (663, 792), (477, 792)]), fill=white, outline=line)
+    d.ellipse(box([490, 516, 638, 559]), fill=white, outline=line, width=stroke)
+    d.polygon(pts([(558, 554), (527, 540), (525, 577), (558, 568), (590, 581), (591, 540)]), fill=blue, outline=line)
+    # Face, fringe, fin ears and white maid headband.
+    d.ellipse(box([451, 310, 681, 543]), fill=skin, outline=line, width=stroke)
+    d.polygon(pts([(453, 379), (402, 339), (413, 417), (458, 438)]), fill=light, outline=line)
+    d.polygon(pts([(680, 385), (733, 346), (715, 425), (679, 437)]), fill=light, outline=line)
+    d.pieslice(box([434, 277, 697, 465]), 175, 355, fill=light, outline=line, width=stroke)
+    d.polygon(pts([(458, 349), (492, 429), (518, 343), (553, 411), (583, 337), (620, 422), (657, 349)]), fill=light)
+    for x, y in [(465, 323), (492, 301), (526, 288), (562, 283), (601, 287), (635, 301), (665, 321)]:
+        d.ellipse(box([x-17, y-15, x+17, y+15]), fill=white, outline=line, width=max(1, stroke//2))
+    d.line(pts([(563, 282), (572, 248), (546, 230)]), fill=blue, width=stroke+2)
+    d.polygon(pts([(658, 322), (696, 302), (707, 346), (666, 336), (642, 357), (628, 319)]), fill=(60, 107, 175), outline=line)
+    for x in (514, 606):
+        d.arc(box([x-22, 418, x+20, 451]), 185, 352, fill=line, width=stroke)
+        d.ellipse(box([x-9, 427, x+9, 458]), fill=(44, 77, 124))
+        d.ellipse(box([x-6, 430, x, 438]), fill=white)
+    d.arc(box([548, 475, 579, 490]), 5, 165, fill=line, width=max(2, stroke//2))
+    for x in (486, 631):
+        d.ellipse(box([x-15, 464, x+15, 475]), fill=(245, 171, 163))
+    # Sleeves, hand and pen.
+    d.rounded_rectangle(box([420, 569, 500, 703]), radius=W//30, fill=white, outline=line, width=stroke)
+    d.rounded_rectangle(box([641, 570, 719, 707]), radius=W//30, fill=white, outline=line, width=stroke)
+    d.ellipse(box([618, 643, 694, 709]), fill=skin, outline=line, width=stroke)
+    d.line(pts([(635, 620), (673, 738)]), fill=(40, 59, 94), width=stroke+2)
+    d.ellipse(box([633, 662, 670, 699]), fill=skin, outline=line, width=max(1, stroke//2))
+    # Foreground table, open book, quiet cup and tiny whale drawing.
+    d.rounded_rectangle(box([55, 710, 949, 920]), radius=W//35, fill=(193, 151, 116), outline=line, width=stroke)
+    d.line(box([80, 755, 919, 755]), fill=(221, 183, 142), width=stroke)
+    d.polygon(pts([(358, 756), (526, 730), (555, 751), (739, 752), (716, 864), (550, 854), (374, 879)]), fill=white, outline=line)
+    d.line(pts([(555, 753), (550, 851)]), fill=(166, 176, 182), width=max(2, stroke//2))
+    for i in range(4):
+        d.line(pts([(394, 787+i*17), (506, 772+i*17)]), fill=(193, 203, 205), width=max(1, stroke//2))
+    d.ellipse(box([591, 787, 667, 827]), fill=light, outline=line, width=max(1, stroke//2))
+    d.polygon(pts([(660, 806), (689, 784), (685, 814), (696, 834), (663, 822)]), fill=blue, outline=line)
+    d.ellipse(box([606, 799, 613, 806]), fill=line)
+    d.rounded_rectangle(box([178, 744, 261, 835]), radius=W//50, fill=(251, 247, 230), outline=line, width=stroke)
+    d.arc(box([241, 755, 292, 819]), 265, 90, fill=line, width=stroke)
+    for _ in range(12):
+        x, y = rnd.randint(90, 930), rnd.randint(895, 968)
+        d.ellipse(box([x, y, x+2, y+2]), fill=(221, 198, 169))
+
+
 TEMPLATES = {
     "two_fish": template_two_fish,
     "whale": template_whale,
@@ -114,6 +188,7 @@ TEMPLATES = {
     "heart": template_heart,
     "cat": template_cat,
     "moon": template_moon,
+    "desk": template_desk,
 }
 
 

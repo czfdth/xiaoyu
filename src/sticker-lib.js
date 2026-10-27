@@ -265,6 +265,12 @@ export function buildStickerStrategyHint() {
   ].join('\n');
 }
 
+// The full strategy remains available in qq_get_prompt. Wakes repeat often,
+// so keep the same operational boundaries in a shorter reminder.
+export function buildCompactStickerStrategyHint() {
+  return '【表情包策略】自然接梗、回应表情；严肃话题不硬发，别刷屏或总用同一张。斗图或回应表情可只发表情。优先选符合语境的备注，不确定先用 qq_get_sticker_image 看图；文字与 qq_send_sticker 分开发，引用/点名按需传参。新表情可看图后用 qq_sticker_note 记理解，合适时少量收藏。';
+}
+
 // 把 AI 本地认知（note/tags/usage）更新到一条表情记录上，并返回新数组。
 export function applyStickerNote(entries, id, patch = {}) {
   const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter(Boolean);

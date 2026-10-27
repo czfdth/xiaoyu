@@ -11,7 +11,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = Join-Path $RuntimeRoot ('backups\program-update-' + $stamp)
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
 New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
-$files = @('src/project-workflow.js','src/reality.js','src/state-store.js','src/memory-attribution.js','src/memory-extraction.js','src/commitments.js',
+$files = @('src/wake-guidance.js','src/sticker-lib.js','src/agency.js','src/situation.js','src/continuity.js','src/adaptive-tools.js','src/delivery-guard.js','src/experience-learning.js','src/drawing-fallback.js','scripts/sketch_render.py','src/project-workflow.js','src/reality.js','src/state-store.js','src/memory-attribution.js','src/memory-extraction.js','src/commitments.js',
   'src/autonomy.js','src/deliveries.js','src/paths.js','scripts/extract-memory.mjs',
   'scripts/proactive-nudge.mjs','scripts/life-wake.mjs','src/bridge.js','src/mcp-snowluma-safe.js')
 function Runtime-Path([string]$relative) {

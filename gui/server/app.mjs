@@ -12,7 +12,7 @@ import fastifyStatic from '@fastify/static';
 import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
 import {
-  overview, configView, saveConfig, saveAvatar, runSetup,
+  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -24,6 +24,7 @@ import { actionList, runAction } from './actions.mjs';
 import { gatewayState, launchGateway } from './gateway.mjs';
 import { replaySecurity, exportSecurity } from './security.mjs';
 import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
+import { tokenOverview } from './tokens.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -172,6 +173,12 @@ export async function buildApp({ guiDir }) {
   app.get('/api/tools', async (req) => toolCatalog({ refresh: req.query?.refresh === '1' }));
   app.post('/api/tools/toggle', async (req) => setToolEnabled(req.body?.name, req.body?.enabled === true));
   app.get('/api/tools/verify', async (req) => verifyTool(req.query?.name));
+  // 花费与上下文预算：token 账本的折算结果 + 两道刹车（步数上限 / 轮换阈值）
+  app.get('/api/tokens', async (req) => tokenOverview({
+    days: Number(req.query?.days) || 7,
+    sessions: Number(req.query?.sessions) || 12,
+  }));
+  app.post('/api/tokens/budget', async (req) => saveContextBudget(req.body ?? {}));
   app.get('/api/life', async () => lifeView());
   app.get('/api/life/chronicles', async () => ({ chronicles: chronicleList() }));
   app.get('/api/life/chronicles/:name', async (req) => readChronicle(req.params.name));

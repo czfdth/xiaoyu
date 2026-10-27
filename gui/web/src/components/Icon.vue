@@ -44,6 +44,10 @@ defineProps({
       <path d="m9 12 2 2 4-4" />
     </g>
     <path v-else-if="name === 'spark'" d="M12 3.2 14 9l5.8 1.6-4.6 3.4 1.4 6.1L12 16.7 7.4 20l1.4-6.1L4.2 10.6 10 9z" />
+    <g v-else-if="name === 'coin'">
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M9.2 9.4h5.6M9.2 12h5.6M12 7.6v8.8" />
+    </g>
     <path v-else-if="name === 'refresh'" d="M20 11a8 8 0 1 0-2.4 5.7M20 5v6h-6" />
     <path v-else-if="name === 'play'" d="M8 5.5v13l10-6.5z" />
     <path v-else-if="name === 'stop'" d="M7 7h10v10H7z" />

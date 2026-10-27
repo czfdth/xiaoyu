@@ -255,6 +255,44 @@ export function saveToolDisabled(name, disabled) {
   return { ok: true, backup: backupFile, disabledTools: next.socialV2.disabledTools };
 }
 
+/** 上下文预算：只写 socialV2.context 里的三个刹车值，0 表示关闭对应那一项。 */
+export function saveContextBudget(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '预算必须是对象');
+  const pick = (key, min, max) => {
+    if (!(key in patch)) return null;
+    const n = Number(patch[key]);
+    if (!Number.isFinite(n)) throw new HttpError(400, `${key} 必须是数字`);
+    const i = Math.trunc(n);
+    if (i < min || i > max) throw new HttpError(400, `${key} 要在 ${min}~${max}`);
+    return i;
+  };
+  const maxStepsPerTurn = pick('maxStepsPerTurn', 0, 500);
+  const rotatePromptTokens = pick('rotatePromptTokens', 0, 2_000_000);
+  const rotateMinTurns = pick('rotateMinTurns', 0, 1000);
+  if (maxStepsPerTurn == null && rotatePromptTokens == null && rotateMinTurns == null) {
+    throw new HttpError(400, '没有可保存的预算项');
+  }
+  const cfg = readConfig();
+  const next = { ...cfg, socialV2: { ...(cfg.socialV2 ?? {}) } };
+  const context = { ...(cfg.socialV2?.context ?? {}) };
+  if (maxStepsPerTurn != null) context.maxStepsPerTurn = maxStepsPerTurn;
+  if (rotatePromptTokens != null) context.rotatePromptTokens = rotatePromptTokens;
+  if (rotateMinTurns != null) context.rotateMinTurns = rotateMinTurns;
+  next.socialV2.context = context;
+  const backupFile = backup(CONFIG_FILE);
+  atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  resetEngineCache();
+  return {
+    ok: true,
+    backup: backupFile,
+    budget: {
+      maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
+      rotatePromptTokens: Number(context.rotatePromptTokens ?? 80000),
+      rotateMinTurns: Number(context.rotateMinTurns ?? 20),
+    },
+  };
+}
+
 export function runSetup(payload = {}) {
   return saveConfig({
     ownerQQ: payload.ownerQQ,
@@ -263,7 +301,6 @@ export function runSetup(payload = {}) {
     dsh: payload.dshBaseUrl ? { baseUrl: payload.dshBaseUrl } : {},
   });
 }
-
 // ── 她 ──────────────────────────────────────────────────────────────────────
 export function herState() {
   const inner = readJson(STATE_FILES.inner, {});
