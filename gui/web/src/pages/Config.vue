@@ -41,6 +41,31 @@ function mb(v) {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`;
 }
 
+// 手机访问（局域网 + 口令）
+const remote = ref(null);
+const remoteForm = reactive({ password: '', port: 8765, allowWrite: false });
+const savingRemote = ref(false);
+
+async function loadRemote() {
+  try {
+    remote.value = await get('/remote');
+    remoteForm.value = { ...remoteForm.value, port: remote.value.port, allowWrite: remote.value.allowWrite };
+  } catch { /* 读不到不影响配置页 */ }
+}
+
+async function saveRemote(enabled) {
+  if (savingRemote.value) return;
+  savingRemote.value = true;
+  try {
+    const payload = { enabled, port: remoteForm.value.port, allowWrite: remoteForm.value.allowWrite === true };
+    if (remoteForm.value.password) payload.password = remoteForm.value.password;
+    const r = await post('/remote', payload);
+    remote.value = r.remote;
+    remoteForm.value.password = '';
+    toast(r.restartHint || '已保存', 'ok', 6000);
+  } catch (e) { toastError(e); } finally { savingRemote.value = false; }
+}
+
 const form = reactive({
   ownerQQ: '',
   privateIds: [],
@@ -175,6 +200,7 @@ async function chooseAvatar(name) {
 }
 onMounted(loadAvatar);
 onMounted(loadOps);
+onMounted(loadRemote);
 
 async function createBackup() {
   backupBusy.value = true;
@@ -326,6 +352,39 @@ async function restoreFrom(name) {
         {{ saving ? '保存中…' : '保存修改' }}
       </button>
     </div>
+
+    <Card title="手机访问" :dim="remote?.enabled ? '已开启' : '默认关闭'">
+      <div class="stack" style="gap: 10px">
+        <div class="hint">
+          默认只绑 127.0.0.1，手机打不开。开启后会绑到 0.0.0.0，<b>必须设口令</b>
+          （至少 12 位，scrypt 哈希存本机），且<b>默认只读</b>：手机能看，改不了配置。
+        </div>
+        <div class="row" style="gap: 12px; flex-wrap: wrap; align-items: flex-end">
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">访问口令（至少 12 位）</span>
+            <input v-model="remoteForm.password" class="input" type="password" placeholder="留空 = 不改口令" style="width: 220px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">端口</span>
+            <input v-model.number="remoteForm.port" class="input" type="number" min="1024" max="65535" style="width: 110px" />
+          </label>
+          <label class="row" style="gap: 6px; align-items: center">
+            <input v-model="remoteForm.allowWrite" type="checkbox" />
+            <span class="small">允许远程写入（不建议）</span>
+          </label>
+        </div>
+        <div class="row" style="gap: 8px; flex-wrap: wrap">
+          <button class="btn primary sm" :disabled="savingRemote" @click="saveRemote(true)">
+            {{ savingRemote ? '保存中…' : '保存并开启' }}
+          </button>
+          <button class="btn sm ghost" :disabled="savingRemote || !remote?.enabled" @click="saveRemote(false)">关闭手机访问</button>
+          <span v-if="remote?.lan?.length" class="muted small">
+            手机访问：<span v-for="ip in remote.lan" :key="ip" class="mono">http://{{ ip }}:{{ remote.port }}</span>
+          </span>
+        </div>
+        <div class="hint">改完重启控制台才生效。口令忘了就在这台电脑上重设一次。</div>
+      </div>
+    </Card>
 
     <Card title="系统体检" :dim="ops ? '密钥 · 备份 · 检索 · 磁盘' : '读取中…'">
       <div class="stack" style="gap: 10px">

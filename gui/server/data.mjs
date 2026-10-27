@@ -23,6 +23,7 @@ import {
 import { HttpError, assertSafeName, normalizeIdList, normalizeQQ } from './guard.mjs';
 import { createAlertCenter } from '../../src/alerts.js';
 import { normalizeLimits, shouldBlockAutonomous, loadDaily } from '../../src/usage-budget.js';
+import { loadRemoteConfig, lanAddresses, hashPassword, MIN_PASSWORD } from './remote.js';
 import { createOneBotHttp } from '../../src/snowluma/index.js';
 import { createPairing, loadPairing, savePairing, clearPairing, pairingStatus } from '../../src/pairing.js';
 import { dshStatus, discoverDsh, persistDshBaseUrl } from '../../src/dsh-discovery.mjs';
@@ -307,6 +308,45 @@ export function saveContextBudget(patch = {}) {
     idleRotateTokens: Number(context.idleRotateTokens ?? 35000),
     repeatToolLimit: Number(context.repeatToolLimit ?? 2),
   };
+}
+
+/** 手机访问：当前设置 + 本机局域网地址（只给本机看，远程请求会被上面拦掉）。 */
+export function remoteView() {
+  const cfg = loadRemoteConfig();
+  return {
+    enabled: cfg.enabled,
+    port: cfg.port,
+    allowWrite: cfg.allowWrite,
+    hasPassword: cfg.hasPassword,
+    passwordAt: cfg.passwordAt,
+    lan: lanAddresses(),
+    minPassword: MIN_PASSWORD,
+  };
+}
+
+/** 开启/关闭手机访问、改口令（口令只存 scrypt 哈希）。 */
+export function saveRemoteConfig(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '参数必须是对象');
+  const cfg = readConfig();
+  const next = { ...cfg, remote: { ...(cfg.remote ?? {}) } };
+  if ('enabled' in patch) next.remote.enabled = patch.enabled === true;
+  if ('allowWrite' in patch) next.remote.allowWrite = patch.allowWrite === true;
+  if (patch.port != null) {
+    const port = Number(patch.port);
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) throw new HttpError(400, '端口要在 1024~65535');
+    next.remote.port = Math.trunc(port);
+  }
+  if (patch.password != null) {
+    const password = String(patch.password);
+    if (password.length < MIN_PASSWORD) throw new HttpError(400, `口令至少要 ${MIN_PASSWORD} 位`);
+    next.remote.passwordHash = hashPassword(password);
+    next.remote.passwordAt = Date.now();
+  }
+  if (next.remote.enabled && !next.remote.passwordHash) throw new HttpError(400, '开启前先设置口令');
+  const backupFile = backup(CONFIG_FILE);
+  atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  resetEngineCache();
+  return { ok: true, backup: backupFile, remote: remoteView(), restartHint: '改完要重启控制台（或她的管家）才生效' };
 }
 
 /** 日预算视图：今天花了多少、主动了几次、上限是多少、现在有没有被拦。 */

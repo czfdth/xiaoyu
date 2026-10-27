@@ -11,8 +11,9 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
+import { loadRemoteConfig, verifySession, verifyPassword, signSession, SESSION_COOKIE, SESSION_DAYS, isLoopback } from './remote.js';
 import {
-  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits,
+  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -53,7 +54,28 @@ export async function buildApp({ guiDir }) {
   }
 
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url.startsWith('/api') && !assertLocalRequest(req, reply)) return reply;
+    // 局域网访问：非本机请求必须带会话 Cookie，默认只读。
+    // 放在最前面，是因为 assertLocalRequest 只认 127.0.0.1，会把手机请求直接 403。
+    const remoteCfg = loadRemoteConfig();
+    const local = isLoopback(req.hostname);
+    if (!local) {
+      if (!remoteCfg.enabled || !remoteCfg.hasPassword) {
+        return reply.code(403).send({ error: '远程访问未开启（先在配置页设置口令）' });
+      }
+      const needsAuth = !(req.url === '/login' || req.url.startsWith('/api/remote/login'));
+      if (needsAuth) {
+        const cookie = String(req.headers.cookie ?? '');
+        const hit = cookie.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
+        const session = hit ? decodeURIComponent(hit.slice(SESSION_COOKIE.length + 1)) : '';
+        if (!verifySession(session)) {
+          return reply.code(401).send({ error: '需要先登录：/login' });
+        }
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !remoteCfg.allowWrite) {
+        return reply.code(403).send({ error: '远程访问默认只读（要改配置请在本机操作）' });
+      }
+    }
+    if (local && req.url.startsWith('/api') && !assertLocalRequest(req, reply)) return reply;
     // 写操作：浏览器同源请求放行；本机其他程序/脚本必须带 x-console-token
     const fromBrowser = Boolean(req.headers.origin) || req.headers['sec-fetch-site'] === 'same-origin';
     if (req.url.startsWith('/api') && req.method === 'GET' && !fromBrowser && /^\/api\/(memory|journal|her|roles)/.test(req.url)) {
@@ -76,6 +98,42 @@ export async function buildApp({ guiDir }) {
         } catch { /* 没有令牌文件就不拦 */ }
       }
     }
+  });
+
+  // ── 局域网登录（手机用）──────────────────────────────────────────────
+  app.get('/login', async (req, reply) => {
+    const cfg = loadRemoteConfig();
+    const blocked = !cfg.enabled || !cfg.hasPassword;
+    reply.type('text/html; charset=utf-8').send(`<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小鱼管家 · 登录</title>
+<style>body{margin:0;background:#0b0f14;color:#e6edf3;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}
+form{background:#121a23;border:1px solid #223040;border-radius:14px;padding:24px;width:min(92vw,340px)}
+h1{font-size:17px;margin:0 0 12px}input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:9px;border:1px solid #28394b;background:#0b1118;color:#e6edf3;font-size:15px}
+button{margin-top:12px;width:100%;padding:10px;border:0;border-radius:9px;background:#38bdf8;color:#04121c;font-weight:600;font-size:15px}
+p{color:#8b9bb0;font-size:12.5px;margin:10px 0 0}</style>
+${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 → 手机访问」里开启并设置口令。</p></form>'
+  : `<form method="post" action="/api/remote/login"><h1>小鱼管家</h1>
+<input type="password" name="password" placeholder="访问口令" autofocus required>
+<button type="submit">进入</button><p>口令只存在你自己电脑上，用 scrypt 哈希保存。</p></form>`}`);
+  });
+
+  app.post('/api/remote/login', async (req, reply) => {
+    const cfg = loadRemoteConfig();
+    if (!cfg.enabled || !cfg.hasPassword) throw new HttpError(403, '远程访问未开启');
+    const password = String(req.body?.password ?? '');
+    if (!verifyPassword(password, cfg.passwordHash)) {
+      await new Promise((r) => setTimeout(r, 400)); // 随手防爆破
+      throw new HttpError(401, '口令不对');
+    }
+    const session = signSession();
+    reply.header('set-cookie', `${SESSION_COOKIE}=${encodeURIComponent(session)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
+    return { ok: true };
+  });
+
+  app.post('/api/remote/logout', async (req, reply) => {
+    reply.header('set-cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+    return { ok: true };
   });
 
   app.setErrorHandler((error, req, reply) => {
@@ -190,6 +248,9 @@ export async function buildApp({ guiDir }) {
   app.get('/api/usage/budget', async () => usageBudgetView());
   // 运维体检：磁盘 / 密钥 / 备份演练 / 索引召回；POST 现场跑，cleanup 默认只演练
   app.get('/api/ops', async () => opsView());
+  // 手机访问：读设置 / 开开关关 / 改口令（只允许本机调用，远程请求在 onRequest 就被拦）
+  app.get('/api/remote', async () => remoteView());
+  app.post('/api/remote', async (req) => saveRemoteConfig(req.body ?? {}));
   // 她的画：按月归拢（梗图和表情单独分栏）
   app.get('/api/works/wall', async (req) => worksWall({ month: String(req.query?.month ?? '') }));
   // 月度小结：GET 读历史，POST 现算一份（会存到 state/reports/month-YYYY-MM.md）
