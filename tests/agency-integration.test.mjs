@@ -12,7 +12,9 @@ import {writeJson,readJson} from '../src/state-store.js';
 import {changeAgency,reserveAgencyWake,finishAgencyWake} from '../src/agency.js';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-test('真实bridge/MCP：主目标保留、实际操作拦截、作品进展、重启和越权',{timeout:60000},async t=>{
+// 这条会真的 spawn 两次 bridge（含一次 /api/restart）+ 连 MCP，在 CI 的共享 runner 上
+// 60 秒不够（本地 20 秒左右就过了）。超时按慢机器给，别让它变成环境造成的假红。
+test('真实bridge/MCP：主目标保留、实际操作拦截、作品进展、重启和越权',{timeout:180000},async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'xiaoyu-agency-it-')),key='private:10001',token='agency-integration-agent-token',admin='agency-integration-console-token';
  let bridge,client,output='',sent=0;
  const gateway=http.createServer((req,res)=>{if(req.url.startsWith('/send_'))sent++;res.end(JSON.stringify({status:'ok',retcode:0,data:req.url==='/get_login_info'?{user_id:10002,nickname:'fake'}:req.url==='/get_status'?{online:true,good:true}:[]}));});await new Promise(r=>gateway.listen(0,'127.0.0.1',r));
@@ -31,7 +33,7 @@ test('真实bridge/MCP：主目标保留、实际操作拦截、作品进展、�
  writeJson(path.join(root,'state/mode.json'),{mode:'reserved2'});
  writeJson(path.join(root,'state/social-v2.json'),{conversations:{[key]:{agentToken:token,bootstrapSent:true,lastWakeReason:'practice',recentMessages:[],wakeConfig:{mode:'diving',infinite:true,triggers:{atMention:true}}}}});
  const api=async(route,body,agent=token)=>{const r=await fetch('http://127.0.0.1:'+port+route,{method:body?'POST':'GET',headers:{connection:'close','content-type':'application/json','x-console-token':admin,...(agent?{'x-agent-token':agent}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
- const start=async()=>{bridge=spawn(process.execPath,['src/bridge.js'],{cwd:process.cwd(),env,stdio:['ignore','pipe','pipe']});bridge.stdout.on('data',d=>output+=d);bridge.stderr.on('data',d=>output+=d);for(let i=0;i<100;i++){try{if((await api('/api/status',null,null)).status===200){await api('/api/mode',{mode:'reserved2'},null);return;}}catch{}if(bridge.exitCode!==null)throw new Error(output.slice(-2000));await sleep(100);}throw new Error('bridge startup timeout');};
+ const start=async()=>{bridge=spawn(process.execPath,['src/bridge.js'],{cwd:process.cwd(),env,stdio:['ignore','pipe','pipe']});bridge.stdout.on('data',d=>output+=d);bridge.stderr.on('data',d=>output+=d);for(let i=0;i<200;i++){try{if((await api('/api/status',null,null)).status===200){await api('/api/mode',{mode:'reserved2'},null);return;}}catch{}if(bridge.exitCode!==null)throw new Error(output.slice(-2000));await sleep(100);}throw new Error('bridge startup timeout');};
 
  await start();client=new Client({name:'agency-it',version:'1'},{capabilities:{}});await client.connect(new StdioClientTransport({command:process.execPath,args:['src/mcp-snowluma-safe.js'],cwd:process.cwd(),env,stderr:'ignore'}));
  const call=async(name,args)=>{const r=await client.callTool({name,arguments:{key,token,...args}});const text=r.content.filter(c=>c.type==='text').map(c=>c.text).join('\n');let data;try{data=JSON.parse(text);}catch{data=text;}return {error:r.isError===true,data};};
