@@ -116,8 +116,8 @@ export async function embedTexts({
   model = SEMANTIC_MODEL_DEFAULT,
   baseUrl = SEMANTIC_BASE_DEFAULT,
   fetchImpl = fetch,
-  batch = SEMANTIC_BATCH,
-  timeoutMs = 120000,
+  batch = 8,
+  timeoutMs = 300000,
   log = () => {},
 } = {}) {
   const list = (Array.isArray(texts) ? texts : []).map((t) => String(t ?? '').trim()).filter(Boolean);
@@ -125,21 +125,33 @@ export async function embedTexts({
   const out = [];
   for (let i = 0; i < list.length; i += batch) {
     const slice = list.slice(i, i + batch);
-    try {
-      const response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/api/embed`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, input: slice }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const vectors = data?.embeddings;
-      if (!Array.isArray(vectors) || vectors.length !== slice.length) throw new Error('返回的向量数量不对');
-      for (const v of vectors) out.push(Float32Array.from(v));
-    } catch (error) {
-      log(`语义索引：算向量失败（${error?.message ?? error}），这一批跳过`);
-      return [];
+    let done = false;
+    // 这台机器上 Ollama 偶发 "Only one usage of each socket address"（内部端口冲突），
+    // 重试一次通常就好：分批 + 退避重试，别让整次建索引白跑。
+    for (let attempt = 0; attempt < 3 && !done; attempt += 1) {
+      try {
+        const response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/api/embed`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          // num_gpu:0 —— bge-m3（F16 bert）走 GPU 时 llama-server 会 "terminated: exit status 1"，
+          // 纯 CPU 正常（实测单条 2.6s；embedding 本来就是轻活）。
+          body: JSON.stringify({ model, input: slice, options: { num_gpu: 0 } }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const vectors = data?.embeddings;
+        if (!Array.isArray(vectors) || vectors.length !== slice.length) throw new Error('返回的向量数量不对');
+        for (const v of vectors) out.push(Float32Array.from(v));
+        done = true;
+      } catch (error) {
+        if (attempt >= 2) {
+          log(`语义索引：算向量失败（${error?.message ?? error}），这一批跳过`);
+          return [];
+        }
+        log(`语义索引：第 ${attempt + 1} 次失败（${error?.message ?? error}），2 秒后重试`);
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      }
     }
   }
   return out;
