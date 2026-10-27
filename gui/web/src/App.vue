@@ -26,6 +26,7 @@ const NAV = [
   { to: '/', icon: 'grid', label: '概览' },
   { to: '/her', icon: 'heart', label: '她' },
   { to: '/life', icon: 'life', label: '一生' },
+  { to: '/works', icon: 'life', label: '画' },
   { to: '/memory', icon: 'book', label: '记忆' },
   { to: '/tools', icon: 'spark', label: '工具' },
   { to: '/spend', icon: 'coin', label: '花费' },

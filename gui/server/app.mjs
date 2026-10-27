@@ -27,6 +27,7 @@ import { toolCatalog, setToolEnabled, setToolsEnabled, verifyTool } from './tool
 import { tokenOverview } from './tokens.mjs';
 import { vitalsView } from './vitals.mjs';
 import { opsView, runOps, runCleanup } from './ops.mjs';
+import { worksWall, buildMonthlyReport, listReports } from './works-report.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -189,6 +190,11 @@ export async function buildApp({ guiDir }) {
   app.get('/api/usage/budget', async () => usageBudgetView());
   // 运维体检：磁盘 / 密钥 / 备份演练 / 索引召回；POST 现场跑，cleanup 默认只演练
   app.get('/api/ops', async () => opsView());
+  // 她的画：按月归拢（梗图和表情单独分栏）
+  app.get('/api/works/wall', async (req) => worksWall({ month: String(req.query?.month ?? '') }));
+  // 月度小结：GET 读历史，POST 现算一份（会存到 state/reports/month-YYYY-MM.md）
+  app.get('/api/reports', async () => listReports({}));
+  app.post('/api/reports/monthly', async (req) => buildMonthlyReport({ month: String(req.body?.month ?? '') }));
   app.post('/api/ops/run', async (req) => runOps(String(req.body?.task ?? 'keys')));
   app.post('/api/ops/cleanup', async (req) => ({
     ok: true,
