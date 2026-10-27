@@ -310,6 +310,37 @@ export function saveContextBudget(patch = {}) {
   };
 }
 
+/** 界面皮肤：读 config.skin（缺省值兜底），给前端一套跨设备一致的设置。 */
+export function skinView() {
+  const cfg = readConfig();
+  const raw = cfg?.skin && typeof cfg.skin === 'object' ? cfg.skin : {};
+  return {
+    enabled: raw.enabled !== false,
+    veil: Number.isFinite(Number(raw.veil)) ? Math.min(0.8, Math.max(0, Number(raw.veil))) : 0.14,
+    boot: raw.boot !== false,
+    sound: raw.sound !== false,
+  };
+}
+
+/** 写皮肤设置：只认这四个字段，值做范围钳制；写前备份 config。 */
+export function saveSkin(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '参数必须是对象');
+  const next = skinView();
+  if ('enabled' in patch) next.enabled = patch.enabled === true;
+  if ('boot' in patch) next.boot = patch.boot === true;
+  if ('sound' in patch) next.sound = patch.sound === true;
+  if ('veil' in patch) {
+    const veil = Number(patch.veil);
+    if (!Number.isFinite(veil) || veil < 0 || veil > 0.8) throw new HttpError(400, 'veil 要在 0~0.8');
+    next.veil = Math.round(veil * 100) / 100;
+  }
+  const cfg = readConfig();
+  const backupFile = backup(CONFIG_FILE);
+  atomicWrite(CONFIG_FILE, `${JSON.stringify({ ...cfg, skin: next }, null, 2)}\n`);
+  resetEngineCache();
+  return { ok: true, backup: backupFile, skin: next };
+}
+
 /** 手机访问：当前设置 + 本机局域网地址（只给本机看，远程请求会被上面拦掉）。 */
 export function remoteView() {
   const cfg = loadRemoteConfig();

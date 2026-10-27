@@ -13,7 +13,7 @@ import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
 import { loadRemoteConfig, verifySession, verifyPassword, signSession, SESSION_COOKIE, SESSION_DAYS, isLoopback } from './remote.js';
 import {
-  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig,
+  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig, skinView, saveSkin,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -254,6 +254,9 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   app.get('/api/ops', async () => opsView());
   // 手机访问：读设置 / 开开关关 / 改口令（只允许本机调用，远程请求在 onRequest 就被拦）
   app.get('/api/remote', async () => remoteView());
+  // 界面皮肤：设置存 config.json，换设备也一致
+  app.get('/api/skin', async () => skinView());
+  app.post('/api/skin', async (req) => saveSkin(req.body ?? {}));
   app.post('/api/remote', async (req) => saveRemoteConfig(req.body ?? {}));
   // 她的画：按月归拢（梗图和表情单独分栏）
   // 关系图：实体 + 事实（服务端算好固定布局，前端只画）

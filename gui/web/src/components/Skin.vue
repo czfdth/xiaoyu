@@ -7,6 +7,7 @@
 //   · 右下角圆钮开面板：开关 / 透明度 / 重播开机
 // 设置存在 localStorage；尊重 prefers-reduced-motion。
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { get, post } from '../api.js';
 
 const KEY = 'xiaoyu.skin';
 const DEFAULTS = { enabled: true, veil: 0.14, boot: true, sound: true };
@@ -28,8 +29,22 @@ const reduced = typeof window !== 'undefined'
 
 const enabled = computed(() => cfg.value.enabled === true);
 
+let pushTimer = null;
 function save() {
+  // 本地先存：断网也能记住这次的选择
   try { localStorage.setItem(KEY, JSON.stringify(cfg.value)); } catch { /* 隐私模式写不进去也无所谓 */ }
+  // 再推给后端（防抖 400ms），失败就不管——下次打开会以服务端为准
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    try {
+      void post('/skin', {
+        enabled: cfg.value.enabled === true,
+        veil: Number(cfg.value.veil) || 0,
+        boot: cfg.value.boot === true,
+        sound: cfg.value.sound === true,
+      }).catch(() => {});
+    } catch { /* 忽略 */ }
+  }, 400);
 }
 
 function applyBodyClass() {
@@ -98,7 +113,20 @@ function setVeil(value) {
   document.body.style.setProperty('--skin-veil', String(cfg.value.veil));
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 服务端为准：换设备、换浏览器都是同一套外观
+  try {
+    const remote = await get('/skin');
+    if (remote && typeof remote === 'object') {
+      cfg.value = {
+        enabled: remote.enabled !== false,
+        veil: Number.isFinite(Number(remote.veil)) ? Number(remote.veil) : cfg.value.veil,
+        boot: remote.boot !== false,
+        sound: remote.sound !== false,
+      };
+      try { localStorage.setItem(KEY, JSON.stringify(cfg.value)); } catch { /* 忽略 */ }
+    }
+  } catch { /* 后端拿不到就用本地缓存 */ }
   // 演示/截图用：?skin=1 强制打开（不写回 localStorage）
   if (new URLSearchParams(location.search).get('skin') === '1') {
     cfg.value.enabled = true;
