@@ -97,20 +97,27 @@ if ($Install) {
   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
   # 静默执行器：任务直接跑 cmd.exe /c 时，每分钟都会在桌面闪一个黑框。
-  # 用 wscript 调 SW_HIDE 起 .cmd，任务照跑，桌面不闪。
-  $hiddenVbs = Join-Path $wrapperDir '_hidden.vbs'
-  if (-not (Test-Path $hiddenVbs)) {
+  #
+  # 原来用 wscript + SW_HIDE（_hidden.vbs），但这台机器上实测 **wscript 不退出**：
+  # sh.Run(cmd, 0, False/True) 都试过，launcher 进程一直挂着，任务永久停在 Running，
+  # 于是每一次触发都多泄漏一个 wscript，跑一阵之后提醒/看门狗这些就再也不动了。
+  # 换成 conhost --headless：没有窗口，命令跑完就退出（实测 0.3 秒 ExitCode=0）。
+  $conhost = Join-Path $env:WINDIR 'System32\conhost.exe'
+  $useHeadless = Test-Path $conhost
+  if (-not $useHeadless) {
+    Write-Host "  ⚠️ 没有 conhost.exe，退回 wscript 静默器（可能不退出，请留意 wscript 泄漏）" -ForegroundColor Yellow
+    $hiddenVbs = Join-Path $wrapperDir '_hidden.vbs'
     $srcVbs = Join-Path $PSScriptRoot '_hidden.vbs'
-    if (Test-Path $srcVbs) {
-      Copy-Item $srcVbs $hiddenVbs -Force
-    } else {
-      Write-Host "  ⚠️ 缺少 _hidden.vbs，计划任务会每分钟弹黑框" -ForegroundColor Yellow
-    }
+    if ((Test-Path $srcVbs) -and -not (Test-Path $hiddenVbs)) { Copy-Item $srcVbs $hiddenVbs -Force }
   }
 
   foreach ($t in $manifest) {
     $wrapper = Write-Wrapper $t
-    $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //Nologo `"$hiddenVbs`" `"$wrapper`""
+    if ($useHeadless) {
+      $action = New-ScheduledTaskAction -Execute $conhost -Argument "--headless cmd.exe /c `"$wrapper`""
+    } else {
+      $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //Nologo `"$hiddenVbs`" `"$wrapper`""
+    }
     $existing = Get-ScheduledTask -TaskName $t.name -ErrorAction SilentlyContinue
     if ($existing) {
       Set-ScheduledTask -TaskName $t.name -Action $action | Out-Null
