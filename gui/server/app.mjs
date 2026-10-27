@@ -11,6 +11,7 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
+import { validateBody } from '../shared/contract.mjs';
 import { loadRemoteConfig, verifySession, verifyPassword, signSession, SESSION_COOKIE, SESSION_DAYS, isLoopback } from './remote.js';
 import {
   overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig, skinView, saveSkin,
@@ -256,7 +257,12 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   app.get('/api/remote', async () => remoteView());
   // 界面皮肤：设置存 config.json，换设备也一致
   app.get('/api/skin', async () => skinView());
-  app.post('/api/skin', async (req) => saveSkin(req.body ?? {}));
+  app.post('/api/skin', async (req) => {
+    // 契约校验：错在哪一字段直接说，别让面板拿到 500
+    const verdict = validateBody('/api/skin', req.body ?? {});
+    if (!verdict.ok) throw new HttpError(400, verdict.errors.join('；'));
+    return saveSkin(req.body ?? {});
+  });
   app.post('/api/remote', async (req) => saveRemoteConfig(req.body ?? {}));
   // 她的画：按月归拢（梗图和表情单独分栏）
   // 关系图：实体 + 事实（服务端算好固定布局，前端只画）
@@ -274,7 +280,11 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
       dryRun: req.body?.dryRun !== false,
     }),
   }));
-  app.post('/api/usage/budget', async (req) => saveUsageLimits(req.body ?? {}));
+  app.post('/api/usage/budget', async (req) => {
+    const verdict = validateBody('/api/usage/budget', req.body ?? {});
+    if (!verdict.ok) throw new HttpError(400, verdict.errors.join('；'));
+    return saveUsageLimits(req.body ?? {});
+  });
   app.get('/api/life', async () => lifeView());
   app.get('/api/life/chronicles', async () => ({ chronicles: chronicleList() }));
   app.get('/api/life/chronicles/:name', async (req) => readChronicle(req.params.name));
