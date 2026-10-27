@@ -84,7 +84,11 @@ export function monthStats(rows = [], { month }) {
     out.days.set(day, (out.days.get(day) || 0) + 1);
     if (row.role === 'her') { out.her += 1; continue; }
     out.other += 1;
-    const who = String(row.sender || (String(row.key).startsWith('group:') ? '群里' : '他')).slice(0, 12);
+    // 私聊的 journal 里没有 sender，用 key 认人（否则会显示成"私聊（434）"这种怪名字）
+    const isPrivate = String(row.key ?? '').startsWith('private:');
+    const who = isPrivate
+      ? '他'
+      : String(row.sender || (String(row.key).startsWith('group:') ? '群里' : '他')).slice(0, 12);
     out.peers.set(who, (out.peers.get(who) || 0) + 1);
   }
   const busiest = [...out.days.entries()].sort((a, b) => b[1] - a[1])[0];
