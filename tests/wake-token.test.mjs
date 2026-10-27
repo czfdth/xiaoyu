@@ -12,8 +12,11 @@ test('关闭沉睡等待时，唤醒和默认收尾不再矛盾；标记已读�
 });
 test('启用沉睡等待时保留完整闸门、时长和新消息处理规则',()=>{
  const v=preSleepGuidance({preSleepWaitEnabled:true,preSleepWaitMs:60000});
- assert.match(v.text,/timeoutMs=60000/);assert.match(v.text,/preSleepWaitSatisfied/);assert.match(v.text,/newMessages/);assert.match(v.text,/canSleepNow/);assert.match(v.closing,/强制等待/);
- assert.match(preSleepGuidance({}).text,/timeoutMs=300000/);
+ assert.match(v.text,/timeoutMs 参数设为 60000/);assert.match(v.text,/preSleepWaitSatisfied/);assert.match(v.text,/newMessages/);assert.match(v.text,/canSleepNow/);assert.match(v.closing,/强制等待/);
+ assert.match(preSleepGuidance({}).text,/timeoutMs 参数设为 300000/);
+ // 提示词里不能再出现 fn(参数=值) 这种伪调用：模型会照抄进工具参数，provider 直接报 invalid JSON
+ assert.doesNotMatch(v.text,/qq_[a-z_]+\([a-zA-Z]+=/);
+ assert.match(v.text,/JSON 对象/);
 });
 test('精简表情提醒保留必要工具和边界，完整策略及表情资料仍可访问',()=>{
  const short=buildCompactStickerStrategyHint(),full=buildStickerStrategyHint();

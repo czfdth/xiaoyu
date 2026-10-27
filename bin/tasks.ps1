@@ -21,6 +21,16 @@ $manifestPath = Join-Path $ROOT 'scripts\tasks.manifest.json'
 $wrapperDir = Join-Path $ROOT 'bin\tasks'
 $logDir = Join-Path $ROOT 'logs'
 
+# 数据目录可能和程序目录不是同一个（安装版都在 %LOCALAPPDATA%\xiaoyu；开发机是代码在仓库、
+# 数据在 LocalAppData）。不显式给 XIAOYU_HOME 的话，src/paths.js 会把**程序目录**当数据目录，
+# 计划任务就会在那个空目录里跑 —— 表面正常、日志全空。线上真踩过：语义索引写进了仓库的空 state。
+$DataHome = $env:XIAOYU_HOME
+if (-not $DataHome) {
+  $installed = Join-Path $env:LOCALAPPDATA 'xiaoyu'
+  if ((Test-Path (Join-Path $installed 'config.json')) -and ($installed -ne $ROOT)) { $DataHome = $installed }
+}
+if (-not $DataHome) { $DataHome = $ROOT }
+
 if (-not (Test-Path $manifestPath)) { Write-Host "❌ 缺少 $manifestPath" -ForegroundColor Red; exit 1 }
 $manifest = (Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).tasks
 if ($Install) { New-Item -ItemType Directory -Force -Path $wrapperDir, $logDir | Out-Null }
@@ -33,6 +43,7 @@ function Write-Wrapper($t) {
     "cd /d `"$ROOT`"",
     'set NODE_OPTIONS=--use-system-ca'
   )
+  if ($DataHome -ne $ROOT) { $lines += "set XIAOYU_HOME=$DataHome" }
   if ($t.args -eq '{yesterday}') {
     $lines += 'for /f %%i in (''powershell -NoProfile -Command "(Get-Date).AddDays(-1).ToString(''yyyy-MM-dd'')"'' ) do set YDAY=%%i'
   }

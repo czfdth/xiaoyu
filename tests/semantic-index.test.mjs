@@ -43,7 +43,7 @@ test('索引读写：不存在/损坏都当空索引，写出来的能读回来'
   assert.equal(loadIndex(file).entries.length, 0, '文件损坏');
 
   const entries = [
-    { id: 'j:1', kind: 'journal', day: '2026-10-26', key: 'private:1', who: '她', text: '画册第九张卡住了', vec: Float32Array.from([1, 0, 0]) },
+    { id: 'j:1', kind: 'journal', day: '2026-10-26', key: 'private:1', who: '她', text: '画册第九张卡住了', hash: 'abc123', vec: Float32Array.from([1, 0, 0]) },
     { id: 'm:2', kind: 'memory', day: '', key: '', who: '记忆', text: '她不太会画画', vec: Float32Array.from([0, 1, 0]) },
   ];
   const saved = saveIndex(file, { model: 'bge-m3', dim: 3, generatedAt: Date.now(), entries });
@@ -53,6 +53,8 @@ test('索引读写：不存在/损坏都当空索引，写出来的能读回来'
   assert.equal(back.dim, 3);
   assert.equal(back.entries[0].text, '画册第九张卡住了');
   assert.equal(back.entries[0].vec.length, 3);
+  // 指纹必须落盘：读不回来的话 build-semantic-index 永远「复用 0 条」，每次全量重算
+  assert.equal(back.entries[0].hash, 'abc123');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

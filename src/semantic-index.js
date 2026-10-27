@@ -97,6 +97,8 @@ export function saveIndex(file, index) {
       day: e.day ?? '',
       key: e.key ?? '',
       who: e.who ?? '',
+      // 内容指纹要落盘：不然下次加载读不回来，增量建索引永远「复用 0 条」、每次都全量重算
+      hash: e.hash ?? '',
       text: e.text,
       vec: encodeVector(e.vec),
     })),

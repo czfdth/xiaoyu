@@ -24,7 +24,7 @@ import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import yaml from 'js-yaml';
 import { extractPresetPrefix, presetPromptBlockers, presetPromptWarnings, renderPresetPromptYaml } from './preset-prompt.js';
 import { GEN1_ROLE_LINE_RE, parseRoleSections, roleCharStats, roleSectionReport, selectRoleText } from './role-card.js';
@@ -844,7 +844,7 @@ function loadConfig() {
         recommendedNameMention: true,
         recommendedQuestion: true,
         recommendedPoke: true,
-        recommendedHint: '如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
+        recommendedHint: '如果你要潜水，推荐先调用 qq_wait_for_messages 完成一次沉睡前观察（把 timeoutMs 设为 300000）：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。',
         batchWindowMs: 8000,
         maxWakePerMinute: 1,
         maxWakePerHour: 12,
@@ -3444,6 +3444,8 @@ async function main() {
     reportSnowlumaHealth();
   }
 
+  let localModelWatchStarted = false;
+
   function startSnowlumaWatch() {
     if (snowlumaWatchStarted) return;
     snowlumaWatchStarted = true;
@@ -3453,6 +3455,49 @@ async function main() {
     // 边沿告警的兜底心跳：主信号（心跳 status.good）到达时会立刻评估，这里只防"心跳也没了"
     setInterval(reportSnowlumaHealth, 30_000);
   }
+
+  /**
+   * 本地模型的两件杂活：Ollama 保活 + 语义索引重建。
+   *
+   * 为什么放在桥接里而不是计划任务：Windows 上 Ollama 是 Portable 版，没有托盘也没有自启；
+   * 而计划任务那条链（wscript → cmd → node）在这台机器上会卡在 wscript 不退出，
+   * 日志一行都没有。桥接本来就在跑，用它当保活器最省事，也最容易验证。
+   */
+  function runLocalTask(script, logName) {
+    try {
+      const logFile = path.join(STATE_DIR, logName);
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      const fd = fs.openSync(logFile, 'a');
+      const child = spawn(process.execPath, [path.join(ROOT, 'scripts', script)], {
+        cwd: ROOT,
+        // 数据目录显式传给子进程：它的 cwd 是程序目录，不等于数据目录
+        env: { ...process.env, XIAOYU_HOME: process.env.XIAOYU_HOME || ROOT },
+        detached: true,
+        stdio: ['ignore', fd, fd],
+        windowsHide: true,
+      });
+      child.on('error', (error) => log(`保活：${script} 启动失败 ${error?.message ?? error}`));
+      child.unref();
+      fs.closeSync(fd);
+    } catch (error) {
+      log(`保活：${script} 启动失败 ${error?.message ?? error}`);
+    }
+  }
+
+  function startLocalModelWatch() {
+    if (localModelWatchStarted) return;
+    localModelWatchStarted = true;
+    // Ollama：每 15 分钟确认一次（脚本自己会先探端口，在跑就立刻退出）
+    setTimeout(() => runLocalTask('ollama-ensure.mjs', 'ollama.log'), 20_000);
+    setInterval(() => runLocalTask('ollama-ensure.mjs', 'ollama.log'), 15 * 60 * 1000).unref?.();
+    // 语义索引：启动时如果超过 6 小时没重建就先补一次，然后每 6 小时一次
+    const indexFile = path.join(STATE_DIR, 'semantic-index.json');
+    let stale = true;
+    try { stale = Date.now() - fs.statSync(indexFile).mtimeMs > 6 * 3600 * 1000; } catch { stale = true; }
+    if (stale) setTimeout(() => runLocalTask('build-semantic-index.mjs', 'semantic-index.log'), 60_000);
+    setInterval(() => runLocalTask('build-semantic-index.mjs', 'semantic-index.log'), 6 * 3600 * 1000).unref?.();
+  }
+
 
   // ── 本地控制台（独立 Web 面板，不依赖 DSH WebUI） ───────────────────────────
   // 模式/角色/静默状态都存 state/*.json，桥接即时感知；此服务只读写这些文件。
@@ -5284,7 +5329,7 @@ async function main() {
             const remainMin = Math.ceil(remaining / 60000);
             sendJson({
               ok: false,
-              error: `还不能通过 qq_mark_read 直接回到潜水：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接收尾沉睡，若你参与了则需下次再等观察窗口。`,
+              error: `还不能通过 qq_mark_read 直接回到潜水：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages（把 timeoutMs 设为 ${preSleepMs}）完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接收尾沉睡，若你参与了则需下次再等观察窗口。`,
               preSleepWaitMs: preSleepMs,
               preSleepWaitRemainingMs: remaining
             }, 400);
@@ -5420,7 +5465,7 @@ async function main() {
             const remainMin = Math.ceil(remaining / 60000);
             sendJson({
               ok: false,
-              error: `还不能立刻设置潜水/下一次唤醒：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接设置并沉睡，若你参与了则需下次再等观察窗口。`,
+              error: `还不能立刻设置潜水/下一次唤醒：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages（把 timeoutMs 设为 ${preSleepMs}）完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接设置并沉睡，若你参与了则需下次再等观察窗口。`,
               preSleepWaitMs: preSleepMs,
               preSleepWaitRemainingMs: remaining
             }, 400);
@@ -6734,8 +6779,8 @@ async function main() {
               canSleepNow: !preSleepBlocked,
               countsAsObservation: preSleepCountsAsObservation,
               hint: preSleepBlocked
-                ? `还不能收尾：还需约 ${Math.ceil(preSleepRemainingMs / 1000)} 秒没有新消息。要完成沉睡前观察，请用 qq_wait_for_messages(timeoutMs=${preSleepWaitMs}) 一次等满——更短的 timeoutMs 不算观察，满足不了闸门（本次 ${Math.round(timeoutMs)}ms ${preSleepCountsAsObservation ? '达标' : '不达标'}）。`
-                : '现在可以直接收尾：qq_mark_read(throughSeq=已读水位) 或 qq_set_wake_config(throughSeq=已读水位, config=…)。不用再等一轮。'
+                ? `还不能收尾：还需约 ${Math.ceil(preSleepRemainingMs / 1000)} 秒没有新消息。要完成沉睡前观察，请调用 qq_wait_for_messages 并把 timeoutMs 设为 ${preSleepWaitMs}，一次等满——更短的 timeoutMs 不算观察，满足不了闸门（本次 ${Math.round(timeoutMs)}ms ${preSleepCountsAsObservation ? '达标' : '不达标'}）。`
+                : '现在可以直接收尾：调用 qq_mark_read 或 qq_set_wake_config，把 throughSeq 填成已读水位即可。不用再等一轮。'
             } : {}),
             newMessages,
             readThroughSeq,
@@ -9721,7 +9766,7 @@ async function main() {
       promptText = buildWakePromptV2(key, opts.wakeReason);
       wakeSnapshot = buildWakeSnapshotV2(key);
       if (wakeSnapshot) {
-        promptText += `\n\n【本次消息快照】\n${JSON.stringify(wakeSnapshot)}\n以上消息已提供，无需重复查询；partial=true 时用 qq_get_unread_messages(afterSeq=readThroughSeq) 继续读取。先处理当前消息；回复前如需确认后续补充，用 qq_wait_for_messages(purpose="reply") 补足短静默，已安静够久会立即返回，不要先长等。收尾只确认你已处理的 readThroughSeq（本地 seq，非 QQ messageId），传给 qq_mark_read 或 qq_set_wake_config 的 throughSeq；新到消息留待处理。`;
+        promptText += `\n\n【本次消息快照】\n${JSON.stringify(wakeSnapshot)}\n以上消息已提供，无需重复查询；partial=true 时继续调用 qq_get_unread_messages，把 afterSeq 设为 readThroughSeq。先处理当前消息；回复前如需确认后续补充，调用 qq_wait_for_messages 并把它的 purpose 设为 reply 补足短静默，已安静够久会立即返回，不要先长等。收尾只确认你已处理的 readThroughSeq（本地 seq，非 QQ messageId），传给 qq_mark_read 或 qq_set_wake_config 的 throughSeq；新到消息留待处理。`;
       }
     }
     let content = [{ type: 'text', text: withSlangContext(applyContextCarryover(key, promptText)) }];
@@ -11379,7 +11424,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       : '';
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
     const replyTiming = replyTimingV2(st);
-    const replyLine = `【首回复节奏】先处理已有消息，完整的问题及时回答。需要确认对方是否继续补充时，用 qq_wait_for_messages(purpose="reply", quietMs=${replyTiming.quietMs})；从最后来信计时，合批和读提示词的耗时也算，目前还差约 ${Math.ceil(replyTiming.remainingQuietMs / 1000)} 秒静默。已安静够久可直接回，工具也会立即返回并补上思考期间的新消息。只有明确没说完、你确实要等下文时，才用普通 messages 长等待。\n\n`;
+    const replyLine = `【首回复节奏】先处理已有消息，完整的问题及时回答。需要确认对方是否继续补充时，调用 qq_wait_for_messages，把它的 purpose 设为 reply、quietMs 设为 ${replyTiming.quietMs}；从最后来信计时，合批和读提示词的耗时也算，目前还差约 ${Math.ceil(replyTiming.remainingQuietMs / 1000)} 秒静默。已安静够久可直接回，工具也会立即返回并补上思考期间的新消息。只有明确没说完、你确实要等下文时，才用普通 messages 长等待。\n\n`;
     const sleepGuidance = preSleepGuidance(cfg.socialV2?.wake);
     const preSleepLine = sleepGuidance.text;
     const lastMsg = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])].reverse().find((m) => m && !m.isSelf);
@@ -11476,7 +11521,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-    return `${roleLine}${identityLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
+    return `${roleLine}${identityLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先调用 qq_wait_for_messages 完成沉睡前观察，把它的 timeoutMs 参数设为 ${preSleepMs}；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。工具参数一律写成 JSON 对象（键名带引号），不要写成 参数=值。`;
   }
 
   async function sendWakePromptV2(key, reason) {
@@ -13248,6 +13293,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   }
   startDshWatch();
   startSnowlumaWatch();
+  startLocalModelWatch();
   startConsoleServer();
 
   await pumpMux();
