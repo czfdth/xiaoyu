@@ -67,6 +67,41 @@ const disabledTotal = computed(() => data.value?.disabledTotal ?? 0);
 const disabledRows = computed(() => Object.values(data.value?.disabledStats ?? {})
   .sort((a, b) => b.attempts - a.attempts || b.failures - a.failures));
 
+// 工具瘦身：从建起来一次都没被调用过的工具，描述+参数却每次请求都在重发。
+// 这几个是核心收发/收尾工具，即使"暂时没用过"也别建议关掉。
+const KEEP_ALWAYS = ['qq_send_message', 'qq_send_group_message', 'qq_send_private_message', 'qq_reply',
+  'qq_wait_for_messages', 'qq_mark_read', 'qq_set_wake_config', 'qq_get_unread_messages',
+  'qq_get_recent_messages', 'qq_get_prompt', 'qq_social_state'];
+const unused = computed(() => {
+  const out = [];
+  for (const g of data.value?.groups ?? []) {
+    for (const t of g.tools) {
+      if (!t.enabled) continue;
+      if (KEEP_ALWAYS.includes(t.name)) continue;
+      if ((t.usage?.calls ?? 0) > 0) continue;
+      out.push({ ...t, group: g.label });
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+});
+const picked = ref([]);
+const trimming = ref(false);
+
+async function disablePicked() {
+  if (!picked.value.length || trimming.value) return;
+  trimming.value = true;
+  try {
+    await post('/tools/toggle-bulk', { names: picked.value, enabled: false });
+    toast(`已停用 ${picked.value.length} 个没用过的工具；重启 DSH 后它们从工具列表消失`, 'ok', 6000);
+    picked.value = [];
+    await load(true);
+  } catch (e) {
+    toastError(e);
+  } finally {
+    trimming.value = false;
+  }
+}
+
 async function toggle(t) {
   if (busy[t.name]) return;
   busy[t.name] = true;
@@ -146,6 +181,34 @@ async function verify(t) {
       <div class="hint" style="margin-top: 10px">
         停用立即生效（桥接会拒绝调用）；重新启用后，工具要等 DSH 重启才会出现在模型的工具列表里。
         同一个开关管着多个工具时会一起变（比如 qq_send_voice 和 qq_list_voices）。
+      </div>
+    </Card>
+
+    <Card v-if="unused.length" title="从没用过的工具" :dim="`${unused.length} 个`">
+      <div class="hint" style="margin-bottom: 10px">
+        这些工具从建起来一次都没被调用过，但描述 + 参数 schema 会随每一次请求重发
+        （90 个工具的说明大约 8~11k token/次）。关掉不影响现有用法，想用再开回来。
+      </div>
+      <div class="stack" style="gap: 6px; max-height: 42vh; overflow: auto">
+        <label
+          v-for="t in unused" :key="t.name"
+          class="row" style="gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer"
+        >
+          <input v-model="picked" type="checkbox" :value="t.name" />
+          <span class="mono" style="min-width: 190px">{{ t.name }}</span>
+          <span class="muted small" style="flex: 1; min-width: 0">{{ t.desc }}</span>
+          <span class="badge">{{ t.group }}</span>
+        </label>
+      </div>
+      <div class="row" style="gap: 8px; margin-top: 10px; flex-wrap: wrap">
+        <button class="btn sm primary" :disabled="!picked.length || trimming" @click="disablePicked">
+          {{ trimming ? '处理中…' : `停用选中的 ${picked.length} 个` }}
+        </button>
+        <button class="btn sm ghost" :disabled="!unused.length" @click="picked = unused.map((t) => t.name)">
+          全选 {{ unused.length }} 个
+        </button>
+        <button class="btn sm ghost" :disabled="!picked.length" @click="picked = []">清空</button>
+        <span class="hint">停用后要重启 DSH，工具才会从模型清单里消失。</span>
       </div>
     </Card>
 

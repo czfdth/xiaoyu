@@ -85,6 +85,14 @@ export const STATE_FILES = Object.freeze({
   body: path.join(STATE_DIR, 'body.json'),
   // 身体/心情的时间序列（面板画趋势用，见 src/vitals.js）
   vitals: path.join(STATE_DIR, 'vitals.jsonl'),
+  // 运行告警（余额不足/连续出错/网关掉线/重启过多/备份过期，见 src/alerts.js）
+  alerts: path.join(STATE_DIR, 'alerts.json'),
+  // 每天的 token 用量与主动次数（日预算用，见 src/usage-budget.js）
+  usageDaily: path.join(STATE_DIR, 'usage-daily.json'),
+  // 回合失败后没答上的消息（见 src/pending-answers.js）
+  pendingAnswers: path.join(STATE_DIR, 'pending-answers.json'),
+  // 桥接启动时间戳（重启风暴检测）
+  boots: path.join(STATE_DIR, 'boots.json'),
   wants: path.join(STATE_DIR, 'wants.json'),
   dreams: path.join(STATE_DIR, 'dreams.jsonl'),
   fantasies: path.join(STATE_DIR, 'fantasies.jsonl'),

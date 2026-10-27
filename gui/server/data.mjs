@@ -21,6 +21,8 @@ import {
   resetEngineCache,
 } from '../../src/paths.js';
 import { HttpError, assertSafeName, normalizeIdList, normalizeQQ } from './guard.mjs';
+import { createAlertCenter } from '../../src/alerts.js';
+import { normalizeLimits, shouldBlockAutonomous, loadDaily } from '../../src/usage-budget.js';
 import { createOneBotHttp } from '../../src/snowluma/index.js';
 import { createPairing, loadPairing, savePairing, clearPairing, pairingStatus } from '../../src/pairing.js';
 import { dshStatus, discoverDsh, persistDshBaseUrl } from '../../src/dsh-discovery.mjs';
@@ -296,8 +298,7 @@ export function saveContextBudget(patch = {}) {
   };
 }
 
-/** 把 socialV2.context 里的预算字段读成面板要的形状（缺省值与 src/context-budget.js 保持一致）。 */
-export function contextBudgetOf(context = {}) {
+/** 把 socialV2.context 里的预算字段读成面板要的形状（缺省值与 src/context-budget.js 保持一致）。 */export function contextBudgetOf(context = {}) {
   return {
     maxStepsPerTurn: Number(context.maxStepsPerTurn ?? 30),
     rotatePromptTokens: Number(context.rotatePromptTokens ?? 45000),
@@ -308,9 +309,51 @@ export function contextBudgetOf(context = {}) {
   };
 }
 
+/** 日预算视图：今天花了多少、主动了几次、上限是多少、现在有没有被拦。 */
+export function usageBudgetView() {
+  const cfg = readConfig();
+  const daily = loadDaily(STATE_FILES.usageDaily);
+  const limits = normalizeLimits(cfg.limits);
+  const verdict = shouldBlockAutonomous({
+    usedTokens: daily.tokens,
+    proactiveCount: daily.proactive,
+    limits,
+  });
+  return {
+    day: daily.day,
+    tokens: daily.tokens,
+    proactive: daily.proactive,
+    limits,
+    blocked: verdict.block,
+    reason: verdict.reason,
+    updatedAt: daily.updatedAt,
+  };
+}
+
+/** 写日预算：只改 limits.dailyTokens / proactivePerDay，0 表示不限。 */
+export function saveUsageLimits(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '预算必须是对象');
+  const pick = (key, max) => {
+    if (!(key in patch)) return null;
+    const n = Number(patch[key]);
+    if (!Number.isFinite(n) || n < 0 || n > max) throw new HttpError(400, `${key} 要在 0~${max}`);
+    return Math.trunc(n);
+  };
+  const dailyTokens = pick('dailyTokens', 1_000_000_000);
+  const proactivePerDay = pick('proactivePerDay', 10_000);
+  if (dailyTokens == null && proactivePerDay == null) throw new HttpError(400, '没有可保存的项');
+  const cfg = readConfig();
+  const next = { ...cfg, limits: { ...(cfg.limits ?? {}) } };
+  if (dailyTokens != null) next.limits.dailyTokens = dailyTokens;
+  if (proactivePerDay != null) next.limits.proactivePerDay = proactivePerDay;
+  const backupFile = backup(CONFIG_FILE);
+  atomicWrite(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  resetEngineCache();
+  return { ok: true, backup: backupFile, budget: usageBudgetView() };
+}
+
 export function runSetup(payload = {}) {
-  return saveConfig({
-    ownerQQ: payload.ownerQQ,
+  return saveConfig({    ownerQQ: payload.ownerQQ,
     allow: { private: payload.private ?? [], groups: payload.groups ?? [] },
     snowluma: { accessToken: payload.token ?? '' },
     dsh: payload.dshBaseUrl ? { baseUrl: payload.dshBaseUrl } : {},
@@ -716,6 +759,15 @@ export async function restoreBackup(name) {
 }
 
 /** 健康告警：进程在，但她不一定“活着”。 */
+const RUNTIME_ALERT_TEXT = {
+  balance: '账户余额不足，她回不了消息',
+  contextOverflow: '上下文爆表，有一轮没答成',
+  agentErrors: '连续几轮 agent 出错',
+  gatewayDown: 'QQ 网关掉线超过 5 分钟',
+  restartStorm: '桥接一小时内重启多次',
+  backupStale: '备份超过 48 小时没更新',
+};
+
 export async function healthAlerts({ ports, dsh }) {
   const alerts = [];
   if (!ports?.bridge) alerts.push({ level: 'error', text: '大脑（3100）没在跑', action: 'restart' });
@@ -776,6 +828,14 @@ export async function overview() {
   const gateway = await gatewayInfo(cfg);
   const dsh = await dshInfo(cfg);
   const alerts = await healthAlerts({ ports, dsh });
+  // 桥接记下的运行告警（余额不足 / 连续出错 / 备份过期…）也挂到首屏，别让人去翻日志
+  try {
+    const runtime = createAlertCenter({ file: STATE_FILES.alerts }).active();
+    for (const a of runtime) {
+      const detail = a.message ? `：${String(a.message).slice(0, 80)}` : '';
+      alerts.push({ level: a.level, text: `${RUNTIME_ALERT_TEXT[a.kind] ?? a.kind}${detail}`, action: 'logs' });
+    }
+  } catch { /* 告警文件坏了不该拖垮首屏 */ }
   return {
     root: APP_ROOT,
     ports,

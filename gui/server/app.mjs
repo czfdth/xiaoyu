@@ -12,7 +12,7 @@ import fastifyStatic from '@fastify/static';
 import { STATE_DIR } from '../../src/paths.js';
 import { assertLocalRequest, HttpError } from './guard.mjs';
 import {
-  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget,
+  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -23,7 +23,7 @@ import {
 import { actionList, runAction } from './actions.mjs';
 import { gatewayState, launchGateway } from './gateway.mjs';
 import { replaySecurity, exportSecurity } from './security.mjs';
-import { toolCatalog, setToolEnabled, verifyTool } from './tools.mjs';
+import { toolCatalog, setToolEnabled, setToolsEnabled, verifyTool } from './tools.mjs';
 import { tokenOverview } from './tokens.mjs';
 import { vitalsView } from './vitals.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
@@ -175,6 +175,8 @@ export async function buildApp({ guiDir }) {
 
   app.get('/api/tools', async (req) => toolCatalog({ refresh: req.query?.refresh === '1' }));
   app.post('/api/tools/toggle', async (req) => setToolEnabled(req.body?.name, req.body?.enabled === true));
+  // 工具瘦身：一次关/开一批（从没用过的工具留在每次请求里白烧 token）
+  app.post('/api/tools/toggle-bulk', async (req) => setToolsEnabled(req.body?.names, req.body?.enabled === true));
   app.get('/api/tools/verify', async (req) => verifyTool(req.query?.name));
   // 花费与上下文预算：token 账本的折算结果 + 两道刹车（步数上限 / 轮换阈值）
   app.get('/api/tokens', async (req) => tokenOverview({
@@ -182,6 +184,9 @@ export async function buildApp({ guiDir }) {
     sessions: Number(req.query?.sessions) || 12,
   }));
   app.post('/api/tokens/budget', async (req) => saveContextBudget(req.body ?? {}));
+  // 日预算：今天用了多少 / 上限多少 / 是否已拦主动
+  app.get('/api/usage/budget', async () => usageBudgetView());
+  app.post('/api/usage/budget', async (req) => saveUsageLimits(req.body ?? {}));
   app.get('/api/life', async () => lifeView());
   app.get('/api/life/chronicles', async () => ({ chronicles: chronicleList() }));
   app.get('/api/life/chronicles/:name', async (req) => readChronicle(req.params.name));

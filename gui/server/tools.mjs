@@ -354,3 +354,30 @@ export async function setToolEnabled(name, enabled) {
   cache = { at: 0, data: null };
   return { ok: true, name, enabled, disabledTools: result.disabledTools, backup: result.backup };
 }
+
+/**
+ * 批量开关：给「工具瘦身」用（90 个工具每个都随请求重发描述，从没用过的关掉能省每步 5~8k token）。
+ * 逐个调用单条写入，最后统一返回禁用清单；任何一个名字不合法都会在 saveToolDisabled 里抛 400。
+ */
+export async function setToolsEnabled(names, enabled) {
+  if (!Array.isArray(names) || !names.length) {
+    const error = new Error('names 必须是非空数组');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (typeof enabled !== 'boolean') {
+    const error = new Error('enabled 必须是布尔');
+    error.statusCode = 400;
+    throw error;
+  }
+  const changed = [];
+  let disabledTools = [];
+  for (const name of names.slice(0, 200)) {
+    const result = saveToolDisabled(String(name), !enabled);
+    disabledTools = result.disabledTools;
+    changed.push(String(name));
+  }
+  cache = { at: 0, data: null };
+  return { ok: true, changed, disabledTools };
+}
+

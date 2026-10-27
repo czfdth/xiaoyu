@@ -57,6 +57,10 @@ import { createTokenLedger, usageOfEvent } from './token-ledger.js';
 import { createContextBudget, createRepeatGuard } from './context-budget.js';
 import { semanticSearch } from './semantic-index.js';
 import { recordVital } from './vitals.js';
+import { createAlertCenter, classifyError, backupAge } from './alerts.js';
+import { addUsage, loadDaily, saveDaily, shouldBlockAutonomous, normalizeLimits, dayKey } from './usage-budget.js';
+import { driftBody } from './vitals-drift.js';
+import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
 import {
   loadSlang,
   saveSlang,
@@ -2637,6 +2641,14 @@ async function main() {
         provider: event?.data?.provider ?? known?.provider
       });
       watchContextBudget(sessionId, event);
+      // 日预算：按上海日期累计 token（明细仍在 token 账本里，这里只留当天总数）
+      try {
+        const rawUsage = usageOfEvent(event);
+        if (rawUsage) {
+          const buckets = normalizeUsage(rawUsage);
+          bumpDaily(buckets.cacheMiss + buckets.cacheHit + buckets.cacheWrite + buckets.output);
+        }
+      } catch { /* 记账失败不影响主链路 */ }
     } catch (error) {
       log('token 账本：摄入事件失败', error?.message ?? error);
     }
@@ -3490,6 +3502,103 @@ async function main() {
    * 每 60 秒看一次 mtime，值没变就不写（recordVital 内部会判断）。
    */
   let vitalsWatchStarted = false;
+
+  // ── 运行告警：出事主动喊人（余额/连续出错/网关掉线/重启过多/备份过期）───────
+  const ALERT_TEXT = {
+    balance: '账户余额不足，接下来她会回不了消息。',
+    contextOverflow: '上下文爆表，有一轮没答成（如果已经换过会话就不用管）。',
+    agentErrors: '连续几轮 agent 出错，她可能答不上话。',
+    gatewayDown: 'QQ 网关掉了超过 5 分钟，她收不到消息。',
+    restartStorm: '桥接一小时内重启多次，可能有人在反复拉起它。',
+    backupStale: '她的备份超过 48 小时没更新。',
+  };
+  /** 告警怎么送到人：用她自己的号私聊主人（不经过智能体）。 */
+  async function notifyOwnerAlert(alert) {
+    try {
+      if (!cfg.ownerQQ) return;
+      const head = ['balance', 'contextOverflow', 'gatewayDown'].includes(alert.kind)
+        ? '⛔ 小鱼这边出错了' : '⚠️ 小鱼这边不对劲';
+      const lines = [
+        `${head}：${ALERT_TEXT[alert.kind] ?? alert.kind}`,
+        alert.message ? `详情：${alert.message}` : '',
+        `时间：${new Date(alert.at ?? Date.now()).toLocaleString('zh-CN')}`,
+        '（这条是系统告警，不用回）',
+      ].filter(Boolean);
+      await sendToQQ(`private:${cfg.ownerQQ}`, lines.join('\n'));
+      // sendToQQ 是排队发送（失败会自己 log），这里补一条成功记录，方便确认"告警真的出去了"
+      log(`已把告警发给她主人（${alert.kind}）`);
+    } catch (error) {
+      log('告警发送失败：' + (error?.message ?? error));
+    }
+    try { appendActivity(`[alert:${alert.kind}] ${String(alert.message ?? '').slice(0, 80)}`); } catch { /* 无所谓 */ }
+  }
+  const alertCenter = createAlertCenter({
+    file: STATE_FILES.alerts,
+    onFire: (alert) => { void notifyOwnerAlert(alert); },
+  });
+
+  // ── 每日用量（日预算的判定材料）───────────────────────────────────────────
+  let dailyState = loadDaily(STATE_FILES.usageDaily);
+  let dailyDirty = false;
+  /**
+   * 桥接刚起来时日账是 0，但今天可能已经花掉几百万 token 了。
+   * 从 token 账本把"今天的"补回来，日预算才是真实用量（只读最后 5000 行）。
+   */
+  function seedDailyFromLedger() {
+    try {
+      const today = dayKey();
+      if (dailyState.day === today && dailyState.tokens > 0) return;
+      const lines = fs.readFileSync(TOKEN_USAGE_FILE, 'utf8').split('\n').filter(Boolean).slice(-5000);
+      let sum = 0;
+      for (const line of lines) {
+        let row;
+        try { row = JSON.parse(line); } catch { continue; }
+        if (row.k !== 'turn' || !row.b) continue;
+        if (dayKey(Number(row.t)) !== today) continue;
+        sum += (Number(row.b.cacheMiss) || 0) + (Number(row.b.cacheHit) || 0)
+          + (Number(row.b.cacheWrite) || 0) + (Number(row.b.output) || 0);
+      }
+      dailyState = { ...dailyState, day: today, tokens: sum };
+      dailyDirty = true;
+      log(`日账：从账本补回今天的 ${sum} token`);
+      flushDaily();
+    } catch { /* 账本读不到就从 0 开始 */ }
+  }
+  function bumpDaily(tokens) {
+    const today = dayKey();
+    if (dailyState.day !== today) dailyState = { day: today, tokens: 0, proactive: 0, updatedAt: 0 };
+    dailyState.tokens += Math.max(0, Number(tokens) || 0);
+    dailyState.updatedAt = Date.now();
+    dailyDirty = true;
+  }
+  function flushDaily() {
+    if (!dailyDirty) return;
+    saveDaily(STATE_FILES.usageDaily, dailyState);
+    dailyDirty = false;
+  }
+  /** 现在还能不能主动开口（只拦"主动搭话"，不影响回消息）。 */
+  function autonomousBudgetBlock(reason) {
+    if (String(reason).split(':')[0] !== 'proactiveCheck') return '';
+    const verdict = shouldBlockAutonomous({
+      usedTokens: dailyState.tokens,
+      proactiveCount: dailyState.proactive,
+      limits: normalizeLimits(cfg.limits),
+    });
+    return verdict.block ? verdict.reason : '';
+  }
+
+  // ── 待补队列：回合失败时把"没答上的"记下来，下一轮补一句 ─────────────────
+  let pendingStore = (() => {
+    try { return JSON.parse(fs.readFileSync(STATE_FILES.pendingAnswers, 'utf8').replace(/^\uFEFF/, '')) ?? {}; } catch { return {}; }
+  })();
+  function savePendingStore() {
+    try {
+      const tmp = `${STATE_FILES.pendingAnswers}.tmp-${process.pid}`;
+      fs.mkdirSync(path.dirname(STATE_FILES.pendingAnswers), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(pendingStore, null, 2), 'utf8');
+      fs.renameSync(tmp, STATE_FILES.pendingAnswers);
+    } catch { /* 落盘失败不影响对话 */ }
+  }
   function startVitalsWatch() {
     if (vitalsWatchStarted) return;
     vitalsWatchStarted = true;
@@ -3503,6 +3612,73 @@ async function main() {
     };
     tick();
     const timer = setInterval(tick, 60 * 1000);
+    timer.unref?.();
+  }
+
+  /** 记录这次启动；一小时内超过 3 次就发重启风暴告警。 */
+  function recordBootAndCheckStorm() {
+    try {
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(STATE_FILES.boots, 'utf8').replace(/^\uFEFF/, '')) ?? []; } catch { list = []; }
+      if (!Array.isArray(list)) list = [];
+      const now = Date.now();
+      list = list.filter((t) => now - Number(t) < 24 * 3600 * 1000);
+      list.push(now);
+      fs.mkdirSync(path.dirname(STATE_FILES.boots), { recursive: true });
+      fs.writeFileSync(STATE_FILES.boots, JSON.stringify(list.slice(-50)), 'utf8');
+      const lastHour = list.filter((t) => now - Number(t) < 3600 * 1000).length;
+      if (lastHour > 3) alertCenter.report('restartStorm', `一小时内启动 ${lastHour} 次`);
+    } catch { /* 记不上就算了 */ }
+  }
+
+  /**
+   * 告警巡检：网关掉线、备份过期、日账落盘。一分钟一次，每项自带冷却。
+   */
+  let gatewayDownSince = 0;
+  function startAlertWatch() {
+    const tick = () => {
+      try {
+        const health = snowlumaHealthSnapshot();
+        const connected = health?.connected !== false;
+        if (connected) {
+          gatewayDownSince = 0;
+        } else if (!gatewayDownSince) {
+          gatewayDownSince = Date.now();
+        } else if (Date.now() - gatewayDownSince > 5 * 60 * 1000) {
+          alertCenter.report('gatewayDown', 'QQ 网关已离线超过 5 分钟');
+          gatewayDownSince = Date.now(); // 重新计时，别每分钟报一次
+        }
+      } catch { /* 健康快照拿不到就跳过 */ }
+      try {
+        const info = backupAge(path.join(ROOT, 'backups'));
+        if (info.ageMs > 48 * 3600 * 1000) {
+          alertCenter.report('backupStale', info.latest ? `最新备份 ${info.latest}` : '一个备份都没有');
+        }
+      } catch { /* 同上 */ }
+      flushDaily();
+    };
+    setTimeout(tick, 90_000);
+    const timer = setInterval(tick, 60 * 1000);
+    timer.unref?.();
+  }
+
+  /**
+   * 身体漂移采样：每 15 分钟把「推算的现在」写进 vitals 序列（**不改 body.json**）。
+   * 她的原话仍以 body.json 为准，这里只是让趋势图不依赖她主不主动写。
+   */
+  function startDriftWatch() {
+    const tick = () => {
+      try {
+        const body = JSON.parse(fs.readFileSync(STATE_FILES.body, 'utf8').replace(/^\uFEFF/, ''));
+        let mood = {};
+        try { mood = JSON.parse(fs.readFileSync(STATE_FILES.mood, 'utf8').replace(/^\uFEFF/, '')); } catch { /* 没心情就只记身体 */ }
+        const sinceMs = Date.now() - fs.statSync(STATE_FILES.body).mtimeMs;
+        const drifted = driftBody(body, { sinceMs });
+        recordVital(STATE_FILES.vitals, drifted, mood, { epsilon: 0.005 });
+      } catch { /* 她还没写过身体就跳过 */ }
+    };
+    setTimeout(tick, 3 * 60 * 1000);
+    const timer = setInterval(tick, 15 * 60 * 1000);
     timer.unref?.();
   }
 
@@ -3882,6 +4058,19 @@ async function main() {
             snowluma: snowlumaHealthSnapshot(),
             activity: readActivityTail(100)
           });
+          return;
+        }
+        // 运行告警：面板读这个；/api/alerts/test 用来验证"告警真的能送到 QQ"
+        if (req.method === 'GET' && url.pathname === '/api/alerts') {
+          sendJson({ ok: true, alerts: alertCenter.active() });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/alerts/test') {
+          const body = await readBody();
+          const kind = ['balance', 'contextOverflow', 'agentErrors', 'gatewayDown', 'restartStorm', 'backupStale'].includes(String(body?.kind ?? ''))
+            ? String(body.kind) : 'agentErrors';
+          alertCenter.report(kind, '这是一条测试告警（控制台触发）', Date.now(), { force: true });
+          sendJson({ ok: true, kind });
           return;
         }
         // 语义检索（本地 bge-m3）：给控制台和排查用。索引不存在 / Ollama 没开时返回空数组，不报错。
@@ -9813,6 +10002,14 @@ async function main() {
       if (!opts.silent) await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
       return { ok: false, error: safeErrText };
     }
+    // 这一轮成功投递了，说明"补答"已经被看到，清掉，别每轮都提
+    try {
+      if (peekPending(pendingStore, key).length) {
+        const taken = takePending(pendingStore, key);
+        pendingStore = taken.state;
+        savePendingStore();
+      }
+    } catch { /* 清理失败不影响对话 */ }
     if (wakeSnapshot && isCurrentSession(key, sessionId)
         && socialV2.conversations.get(canonicalV2Key(key)) === wakeState
         && wakeState.agentToken === wakeToken) {
@@ -11432,6 +11629,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   }
 
   function buildWakePromptV2(key, reason) {
+    const pendingLine = pendingHint(peekPending(pendingStore, key));
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const identityLine = selfIdentityTextV2();
@@ -11493,7 +11691,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
@@ -11562,7 +11760,13 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   async function sendWakePromptV2(key, reason) {
     if(!wakeSituationDecision(STATE_FILES.situation,key,getSocialV2State(key),reason).ok)return;
     if(autonomousReason(reason)&&continuityFor(key).policy.proactiveDisabled&&!['practice','project','life','task'].includes(reason))return;
+    const budgetBlocked = autonomousBudgetBlock(reason);
+    if (budgetBlocked) {
+      log(`[预算] 跳过主动唤醒 ${key}（${reason}）：${budgetBlocked}`);
+      return;
+    }
     if(reason!=='bootstrap')getSocialV2State(key).autonomousWake=autonomousReason(reason);
+    if (String(reason).split(':')[0] === 'proactiveCheck') { dailyState.proactive += 1; dailyDirty = true; }
     if (cfg.socialV2?.enabled === false) return;
     if (currentMode !== 'reserved2' || socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
@@ -12971,6 +13175,20 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
                 const safeMsg = shouldAuditKey(key) && SENSITIVE_RE.test(msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
                 // 以前这里只发 QQ、不写日志：出问题时 bridge.log 里什么都没有，排查只能靠猜（PR #24）。
                 log(`⚠️ agent 处理出错 (${key})：${safeMsg}`);
+                // ① 告警：连续出错 / 余额不足 / 上下文爆表都会被这里接住
+                try { alertCenter.report(classifyError(safeMsg), safeMsg); } catch { /* 告警失败不影响回复 */ }
+                // ② 待补：这一轮没答成，把未读里最近几条记下来，下一轮提示里补
+                try {
+                  const stPending = getSocialV2State(key);
+                  const unread = Array.isArray(stPending?.unread) ? stPending.unread.slice(-3) : [];
+                  pendingStore = addPending(pendingStore, key, {
+                    at: Date.now(),
+                    reason: safeMsg.slice(0, 120),
+                    texts: unread.map((m) => String(m?.text ?? m?.plain ?? '').slice(0, 120)),
+                    seq: stPending?.lastUnreadSeq,
+                  });
+                  savePendingStore();
+                } catch { /* 记不上就算了 */ }
                 appendActivity(`${key} agent 处理出错：${safeMsg.slice(0, 80)}`);
                 await sendToQQ(key, `⚠️ agent 处理出错：${safeMsg}`);
                 if (isFarewell) {
@@ -13330,6 +13548,10 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   startSnowlumaWatch();
   startLocalModelWatch();
   startVitalsWatch();
+  seedDailyFromLedger();
+  recordBootAndCheckStorm();
+  startAlertWatch();
+  startDriftWatch();
   startConsoleServer();
 
   await pumpMux();

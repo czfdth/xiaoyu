@@ -53,12 +53,41 @@ async function applyPreset(p) {
   await save(`已切到「${p.label}」；桥接重启后生效`);
 }
 
+// 日预算：到线只停"主动搭话"，不影响回复；0 = 不限
+const budget = ref(null);
+const budgetForm = ref({ dailyTokens: 0, proactivePerDay: 0 });
+const savingBudget = ref(false);
+
+async function loadBudget() {
+  try {
+    budget.value = await get('/usage/budget');
+    budgetForm.value = {
+      dailyTokens: Number(budget.value?.limits?.dailyTokens) || 0,
+      proactivePerDay: Number(budget.value?.limits?.proactivePerDay) || 0,
+    };
+  } catch (e) { toastError(e); }
+}
+
+async function saveBudget() {
+  if (savingBudget.value) return;
+  savingBudget.value = true;
+  try {
+    const r = await post('/usage/budget', {
+      dailyTokens: Number(budgetForm.value.dailyTokens) || 0,
+      proactivePerDay: Number(budgetForm.value.proactivePerDay) || 0,
+    });
+    budget.value = r.budget;
+    toast('日预算已保存；桥接按新值判断（改完不用重启也行，下一次主动唤醒就会用上）');
+  } catch (e) { toastError(e); } finally { savingBudget.value = false; }
+}
+
 async function load() {
   loading.value = true;
   error.value = '';
   try {
     data.value = await get('/tokens?days=7');
     form.value = { ...(data.value?.budget ?? form.value) };
+    await loadBudget();
   } catch (e) {
     error.value = String(e?.message ?? e);
     toastError(e);
@@ -210,6 +239,44 @@ async function save(message = '已保存；桥接重启后按新预算执行') {
           <b>空闲刷新</b>：空闲到缓存肯定过期时，下一次唤醒本来就要按未命中价重读整段历史 —— 直接起新会话更便宜。
           <b>打转打断</b>：同一工具、同样的参数重复 {{ form.repeatToolLimit }} 次就停（等待/已读/唤醒类工具不参与）。
           填 0 关闭对应那一项；改完重启桥接生效。
+        </div>
+      </div>
+    </Card>
+
+    <Card title="日预算" :dim="budget?.blocked ? '已触发降级' : (budget?.day || '')">
+      <div class="stack" style="gap: 12px">
+        <div class="row" style="gap: 18px; flex-wrap: wrap">
+          <div>
+            <div class="stat-num" :style="{ color: budget?.blocked ? 'var(--warn)' : 'var(--brand)' }">{{ num(budget?.tokens) }}</div>
+            <div class="label">今天用的 token</div>
+          </div>
+          <div>
+            <div class="stat-num">{{ num(budget?.proactive) }}</div>
+            <div class="label">今天主动开口</div>
+          </div>
+          <div>
+            <div class="stat-num">{{ budget?.limits?.dailyTokens ? num(budget.limits.dailyTokens) : '不限' }}</div>
+            <div class="label">日上限</div>
+          </div>
+        </div>
+
+        <div class="row" style="gap: 10px; flex-wrap: wrap">
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">每天最多多少 token（0 = 不限）</span>
+            <input v-model.number="budgetForm.dailyTokens" class="input" type="number" min="0" step="1000000" style="width: 190px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">每天最多主动几次（0 = 不限）</span>
+            <input v-model.number="budgetForm.proactivePerDay" class="input" type="number" min="0" style="width: 170px" />
+          </label>
+          <button class="btn primary sm" :disabled="savingBudget" style="align-self: flex-end" @click="saveBudget">
+            {{ savingBudget ? '保存中…' : '保存' }}
+          </button>
+        </div>
+
+        <div class="hint">
+          到线只停「主动搭话」，她照样回你的消息。触发时会写进日志和首屏告警，不会悄悄省钱。
+          <span v-if="budget?.blocked" style="color: var(--warn)">现在是：{{ budget.reason }}</span>
         </div>
       </div>
     </Card>
