@@ -7,6 +7,40 @@ import Field from '../components/Field.vue';
 import TagInput from '../components/TagInput.vue';
 
 const meta = ref({ file: '', exists: false, hasToken: false, warnings: [] });
+
+// 系统体检：密钥 / 备份可恢复性 / 语义检索召回 / 磁盘占用
+const ops = ref(null);
+const opsBusy = ref('');
+
+async function loadOps() {
+  try { ops.value = await get('/ops'); } catch { /* 体检读不到不影响配置页 */ }
+}
+
+async function runOpsTask(task) {
+  if (opsBusy.value) return;
+  opsBusy.value = task;
+  try {
+    const r = await post('/ops/run', { task });
+    ops.value = r.health;
+    const label = task === 'drill' ? '备份演练' : task === 'index' ? '索引体检' : '密钥扫描';
+    toast(`已跑完：${label}`);
+  } catch (e) { toastError(e); } finally { opsBusy.value = ''; }
+}
+
+async function cleanupDryRun() {
+  try {
+    const r = await post('/ops/cleanup', { dryRun: true });
+    toast(r.removed.length
+      ? `可清理 ${r.removed.length} 个文件，约 ${r.mb} MB（演练，未删除）`
+      : '没有需要清理的旧备份/旧日志');
+  } catch (e) { toastError(e); }
+}
+
+function mb(v) {
+  const n = Number(v) || 0;
+  return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`;
+}
+
 const form = reactive({
   ownerQQ: '',
   privateIds: [],
@@ -140,6 +174,7 @@ async function chooseAvatar(name) {
   } catch (e) { toastError(e); } finally { avatarBusy.value = false; }
 }
 onMounted(loadAvatar);
+onMounted(loadOps);
 
 async function createBackup() {
   backupBusy.value = true;
@@ -291,5 +326,66 @@ async function restoreFrom(name) {
         {{ saving ? '保存中…' : '保存修改' }}
       </button>
     </div>
+
+    <Card title="系统体检" :dim="ops ? '密钥 · 备份 · 检索 · 磁盘' : '读取中…'">
+      <div class="stack" style="gap: 10px">
+        <div class="row spread" style="gap: 10px; flex-wrap: wrap">
+          <span class="row" style="gap: 8px">
+            <i class="dot" :style="{ background: ops?.keys?.ok ? 'var(--ok)' : 'var(--warn)' }" />
+            <b>密钥</b>
+            <span class="muted small">
+              {{ ops?.keys?.ok ? '没有明文密钥' : (ops?.keys?.plaintextFiles?.length ? '明文在 ' + ops.keys.plaintextFiles.map((f) => f.split('\\').pop()).join('、') : '待检查') }}
+            </span>
+            <span v-if="ops?.keys?.logLeaks?.length" class="badge warn">日志里 {{ ops.keys.logLeaks.length }} 处</span>
+          </span>
+          <button class="btn sm ghost" :disabled="!!opsBusy" @click="runOpsTask('keys')">
+            {{ opsBusy === 'keys' ? '扫描中…' : '重扫' }}
+          </button>
+        </div>
+
+        <div class="row spread" style="gap: 10px; flex-wrap: wrap">
+          <span class="row" style="gap: 8px">
+            <i class="dot" :style="{ background: ops?.drill ? (ops.drill.ok ? 'var(--ok)' : 'var(--err)') : 'var(--muted)' }" />
+            <b>备份</b>
+            <span class="muted small">
+              {{ ops?.drill ? (ops.drill.ok ? '可恢复：' + ops.drill.backup + '，' + ops.drill.journalRows + ' 条聊天记录' : '演练失败：' + ops.drill.reason) : '还没演练过' }}
+            </span>
+          </span>
+          <button class="btn sm ghost" :disabled="!!opsBusy" @click="runOpsTask('drill')">
+            {{ opsBusy === 'drill' ? '解压中…' : '演练一次' }}
+          </button>
+        </div>
+
+        <div class="row spread" style="gap: 10px; flex-wrap: wrap">
+          <span class="row" style="gap: 8px">
+            <i class="dot" :style="{ background: ops?.index ? (ops.index.ok ? 'var(--ok)' : 'var(--warn)') : 'var(--muted)' }" />
+            <b>语义检索</b>
+            <span class="muted small">
+              {{ ops?.index ? (ops.index.ok ? '召回 ' + Math.round((ops.index.rate || 0) * 100) + '%（' + ops.index.hits + '/' + ops.index.samples + '），共 ' + ops.index.entries + ' 条' : (ops.index.reason || '未通过')) : '还没体检过' }}
+            </span>
+          </span>
+          <button class="btn sm ghost" :disabled="!!opsBusy" @click="runOpsTask('index')">
+            {{ opsBusy === 'index' ? '抽样中…' : '体检一次' }}
+          </button>
+        </div>
+
+        <div class="row spread" style="gap: 10px; flex-wrap: wrap">
+          <span class="row" style="gap: 8px">
+            <i class="dot" style="background: var(--brand)" />
+            <b>磁盘</b>
+            <span class="muted small">
+              数据 {{ mb(ops?.disk?.home?.mb) }}（state {{ mb(ops?.disk?.state?.mb) }} · 备份 {{ mb(ops?.disk?.backups?.mb) }} · 日志 {{ mb(ops?.disk?.logs?.mb) }}）
+              <span v-if="ops?.disk?.free">，剩余 {{ ops.disk.free }} GB</span>
+            </span>
+          </span>
+          <button class="btn sm ghost" @click="cleanupDryRun">清理演练</button>
+        </div>
+
+        <div class="hint">
+          恢复演练会真的把最新备份解开、校验 JSON 和聊天记录条数（跑完自动删临时目录）。
+          清理只动 30 天前的备份 zip 和 14 天前的日志，<b>不会碰 state 里的记忆</b>。
+        </div>
+      </div>
+    </Card>
   </template>
 </template>

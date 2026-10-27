@@ -26,6 +26,7 @@ import { replaySecurity, exportSecurity } from './security.mjs';
 import { toolCatalog, setToolEnabled, setToolsEnabled, verifyTool } from './tools.mjs';
 import { tokenOverview } from './tokens.mjs';
 import { vitalsView } from './vitals.mjs';
+import { opsView, runOps, runCleanup } from './ops.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -186,6 +187,17 @@ export async function buildApp({ guiDir }) {
   app.post('/api/tokens/budget', async (req) => saveContextBudget(req.body ?? {}));
   // 日预算：今天用了多少 / 上限多少 / 是否已拦主动
   app.get('/api/usage/budget', async () => usageBudgetView());
+  // 运维体检：磁盘 / 密钥 / 备份演练 / 索引召回；POST 现场跑，cleanup 默认只演练
+  app.get('/api/ops', async () => opsView());
+  app.post('/api/ops/run', async (req) => runOps(String(req.body?.task ?? 'keys')));
+  app.post('/api/ops/cleanup', async (req) => ({
+    ok: true,
+    ...runCleanup({
+      keepBackupDays: Number(req.body?.keepBackupDays) || 30,
+      keepLogDays: Number(req.body?.keepLogDays) || 14,
+      dryRun: req.body?.dryRun !== false,
+    }),
+  }));
   app.post('/api/usage/budget', async (req) => saveUsageLimits(req.body ?? {}));
   app.get('/api/life', async () => lifeView());
   app.get('/api/life/chronicles', async () => ({ chronicles: chronicleList() }));

@@ -93,6 +93,11 @@ export const STATE_FILES = Object.freeze({
   pendingAnswers: path.join(STATE_DIR, 'pending-answers.json'),
   // 桥接启动时间戳（重启风暴检测）
   boots: path.join(STATE_DIR, 'boots.json'),
+  // 运维体检结果（磁盘/密钥/备份演练/索引召回/日报时间，见 src/ops.js）
+  opsHealth: path.join(STATE_DIR, 'ops-health.json'),
+  opsReports: path.join(STATE_DIR, 'reports'),
+  // 语义索引（scripts/build-semantic-index.mjs 产出）
+  semanticIndex: path.join(STATE_DIR, 'semantic-index.json'),
   wants: path.join(STATE_DIR, 'wants.json'),
   dreams: path.join(STATE_DIR, 'dreams.jsonl'),
   fantasies: path.join(STATE_DIR, 'fantasies.jsonl'),

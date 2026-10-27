@@ -35,6 +35,8 @@ import {
   ROLES_DIR,
   PRESETS_DIR,
   CONFIG_FILE,
+  LOGS_DIR,
+  COMPANION_CONFIG,
   CONSOLE_HTML,
   ensureRuntime,
   statePath
@@ -61,6 +63,7 @@ import { createAlertCenter, classifyError, backupAge } from './alerts.js';
 import { addUsage, loadDaily, saveDaily, shouldBlockAutonomous, normalizeLimits, dayKey } from './usage-budget.js';
 import { driftBody } from './vitals-drift.js';
 import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
+import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
 import {
   loadSlang,
   saveSlang,
@@ -3511,6 +3514,8 @@ async function main() {
     gatewayDown: 'QQ 网关掉了超过 5 分钟，她收不到消息。',
     restartStorm: '桥接一小时内重启多次，可能有人在反复拉起它。',
     backupStale: '她的备份超过 48 小时没更新。',
+    keyLeak: '日志里出现了疑似 API 密钥，建议立刻轮换。',
+    indexRot: '语义检索的召回率掉下来了（索引可能过期或换了模型）。',
   };
   /** 告警怎么送到人：用她自己的号私聊主人（不经过智能体）。 */
   async function notifyOwnerAlert(alert) {
@@ -3679,6 +3684,161 @@ async function main() {
     };
     setTimeout(tick, 3 * 60 * 1000);
     const timer = setInterval(tick, 15 * 60 * 1000);
+    timer.unref?.();
+  }
+
+  /**
+   * 运维体检：密钥泄漏 / 磁盘占用 / 备份能不能恢复 / 语义索引召没召回 / 她的一天。
+   * 每 30 分钟醒一次，按各自的周期干活（小时级扫密钥、每天 23 点日报、每周演练）。
+   */
+  function readJsonSafe(file) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return null; }
+  }
+  function readOpsState() {
+    try { return JSON.parse(fs.readFileSync(STATE_FILES.opsHealth, 'utf8').replace(/^\uFEFF/, '')) ?? {}; } catch { return {}; }
+  }
+  function writeOpsState(patch) {
+    try {
+      const next = { ...readOpsState(), ...patch, updatedAt: Date.now() };
+      fs.mkdirSync(path.dirname(STATE_FILES.opsHealth), { recursive: true });
+      const tmp = `${STATE_FILES.opsHealth}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
+      fs.renameSync(tmp, STATE_FILES.opsHealth);
+      return next;
+    } catch { return readOpsState(); }
+  }
+
+  /** 今天花了多少 token / 多少钱（估算，按 deepseek 的缓存价）。 */
+  function todayUsage() {
+    let tokens = 0;
+    let cost = 0;
+    try {
+      const today = dayKey();
+      const lines = fs.readFileSync(TOKEN_USAGE_FILE, 'utf8').split('\n').filter(Boolean).slice(-4000);
+      for (const line of lines) {
+        let row;
+        try { row = JSON.parse(line); } catch { continue; }
+        if (row.k !== 'turn' || !row.b) continue;
+        if (dayKey(Number(row.t)) !== today) continue;
+        const miss = Number(row.b.cacheMiss) || 0;
+        const hit = Number(row.b.cacheHit) || 0;
+        const out = Number(row.b.output) || 0;
+        tokens += miss + hit + (Number(row.b.cacheWrite) || 0) + out;
+        cost += (miss * 1 + hit * 0.02 + out * 4) / 1e6;
+      }
+    } catch { /* 账本读不到就按 0 报 */ }
+    return { tokens, cost: Math.round(cost * 100) / 100 };
+  }
+
+  /** 今天她和谁聊得多 + 说了多少条（直接读 journal，不依赖 state）。 */
+  function todayChat() {
+    const day = dayKey();
+    const out = { day, her: 0, other: 0, peers: new Map(), firstAt: '', lastAt: '' };
+    try {
+      const file = path.join(STATE_FILES.journalDir, `${day}.jsonl`);
+      for (const line of fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+        let row;
+        try { row = JSON.parse(line); } catch { continue; }
+        const clock = new Date(Number(row.t)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' });
+        if (!out.firstAt) out.firstAt = clock;
+        out.lastAt = clock;
+        if (row.role === 'her') { out.her += 1; continue; }
+        out.other += 1;
+        const who = String(row.sender || (String(row.key).startsWith('group:') ? '群里' : '他')).slice(0, 12);
+        out.peers.set(who, (out.peers.get(who) || 0) + 1);
+      }
+    } catch { /* 今天还没说话 */ }
+    out.topPeers = [...out.peers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([who, count]) => ({ who, count }));
+    return out;
+  }
+
+  function buildDailyReport() {
+    const chat = todayChat();
+    const usage = todayUsage();
+    let diaryCount = 0;
+    try {
+      const file = path.join(STATE_FILES.diaryDir, `${chat.day}.md`);
+      if (fs.existsSync(file) && fs.statSync(file).size > 40) diaryCount = 1;
+    } catch { /* 没日记 */ }
+    return composeDailyReport({
+      day: chat.day,
+      herMessages: chat.her,
+      otherMessages: chat.other,
+      topPeers: chat.topPeers,
+      mood: String(readJsonSafe(STATE_FILES.mood)?.mood ?? ''),
+      diary: diaryCount,
+      tokens: usage.tokens,
+      cost: usage.cost,
+      firstAt: chat.firstAt,
+      lastAt: chat.lastAt,
+    });
+  }
+
+  async function runOpsCheck(task = 'all') {
+    const state = readOpsState();
+    const now = Date.now();
+    const out = { ...state };
+
+    if (task === 'all' || task === 'keys') {
+      try {
+        const logs = ['bridge.log', 'bridge.err.log', 'console.err.log']
+          .map((n) => path.join(LOGS_DIR, n)).filter((f) => fs.existsSync(f));
+        const health = keyHealth({ configFiles: [COMPANION_CONFIG, CONFIG_FILE], logFiles: logs });
+        out.keys = { ...health, at: now };
+        if (health.logLeaks.length) alertCenter.report('keyLeak', `${health.logLeaks.length} 处：${health.logLeaks[0].file}`);
+      } catch (error) { out.keys = { ok: false, reason: String(error?.message ?? error), at: now }; }
+    }
+
+    if (task === 'all' || task === 'drill') {
+      try {
+        const drill = restoreDrill({ backupDir: path.join(ROOT, 'backups'), tmpRoot: path.join(os.tmpdir(), 'xiaoyu-drill') });
+        out.drill = drill;
+        if (!drill.ok) alertCenter.report('backupStale', `恢复演练失败：${drill.reason}`);
+      } catch (error) { out.drill = { ok: false, reason: String(error?.message ?? error), at: now }; }
+    }
+
+    if (task === 'all' || task === 'index') {
+      try {
+        const index = await indexHealth({ indexFile: STATE_FILES.semanticIndex, samples: 10 });
+        out.index = index;
+        if (!index.ok) alertCenter.report('indexRot', index.reason);
+      } catch (error) { out.index = { ok: false, reason: String(error?.message ?? error), at: now }; }
+    }
+
+    if (task === 'all' || task === 'disk') {
+      try { out.disk = diskReport({ home: ROOT }); } catch (error) { out.disk = { reason: String(error?.message ?? error) }; }
+    }
+
+    return writeOpsState(out);
+  }
+
+  function startOpsWatch() {
+    const tick = async () => {
+      const state = readOpsState();
+      const now = Date.now();
+      // 密钥：每小时扫一次
+      if (!state.keys?.at || now - state.keys.at > 60 * 60 * 1000) await runOpsCheck('keys');
+      // 每周：恢复演练 + 索引召回
+      if (!state.drill?.at || now - state.drill.at > 7 * 24 * 3600 * 1000) await runOpsCheck('drill');
+      if (!state.index?.at || now - state.index.at > 7 * 24 * 3600 * 1000) await runOpsCheck('index');
+      // 每天 23 点后：她的一天
+      const day = dayKey();
+      const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+      if (hour >= 23 && state.lastReportDay !== day) {
+        try {
+          const text = buildDailyReport();
+          fs.mkdirSync(STATE_FILES.opsReports, { recursive: true });
+          fs.writeFileSync(path.join(STATE_FILES.opsReports, `${day}.md`), `${text}\n`, 'utf8');
+          if (cfg.ownerQQ) await sendToQQ(`private:${cfg.ownerQQ}`, text);
+          writeOpsState({ lastReportDay: day, lastReportText: text });
+          log(`日报已生成并发出（${day}）`);
+        } catch (error) { log('日报生成失败：' + (error?.message ?? error)); }
+      }
+      // 磁盘：顺带更新一次（只读，不清理）
+      try { writeOpsState({ disk: diskReport({ home: ROOT }) }); } catch { /* 忽略 */ }
+    };
+    setTimeout(() => { void tick(); }, 120_000);
+    const timer = setInterval(() => { void tick(); }, 30 * 60 * 1000);
     timer.unref?.();
   }
 
@@ -4061,6 +4221,31 @@ async function main() {
           return;
         }
         // 运行告警：面板读这个；/api/alerts/test 用来验证"告警真的能送到 QQ"
+        // 运维体检：磁盘/密钥/备份演练/索引召回（面板读它；POST 可以现场跑一遍）
+        if (req.method === 'GET' && url.pathname === '/api/ops/health') {
+          let state = readOpsState();
+          try { state = { ...state, disk: diskReport({ home: ROOT }) }; } catch { /* 磁盘读不到就算了 */ }
+          sendJson({ ok: true, health: state });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/ops/run') {
+          const body = await readBody();
+          const task = ['keys', 'drill', 'index', 'disk'].includes(String(body?.task ?? '')) ? String(body.task) : 'all';
+          const state = await runOpsCheck(task);
+          sendJson({ ok: true, task, health: state });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/ops/cleanup') {
+          const body = await readBody();
+          const result = cleanup({
+            home: ROOT,
+            keepBackupDays: Number(body?.keepBackupDays) > 0 ? Number(body.keepBackupDays) : 30,
+            keepLogDays: Number(body?.keepLogDays) > 0 ? Number(body.keepLogDays) : 14,
+            dryRun: body?.dryRun === true,
+          });
+          sendJson({ ok: true, ...result });
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/alerts') {
           sendJson({ ok: true, alerts: alertCenter.active() });
           return;
@@ -13177,6 +13362,12 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
                 log(`⚠️ agent 处理出错 (${key})：${safeMsg}`);
                 // ① 告警：连续出错 / 余额不足 / 上下文爆表都会被这里接住
                 try { alertCenter.report(classifyError(safeMsg), safeMsg); } catch { /* 告警失败不影响回复 */ }
+                // 余额见底时补一句人话：至少让对方知道不是"她不回"，而是这边卡住了
+                try {
+                  if (classifyError(safeMsg) === 'balance') {
+                    await sendToQQ(key, '我这边账户额度见底了，一时半会儿动不了——等我处理好就回来找你。');
+                  }
+                } catch { /* 兜底话发不出去就算了 */ }
                 // ② 待补：这一轮没答成，把未读里最近几条记下来，下一轮提示里补
                 try {
                   const stPending = getSocialV2State(key);
@@ -13552,6 +13743,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   recordBootAndCheckStorm();
   startAlertWatch();
   startDriftWatch();
+  startOpsWatch();
   startConsoleServer();
 
   await pumpMux();
