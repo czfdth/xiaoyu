@@ -29,6 +29,7 @@ import { tokenOverview } from './tokens.mjs';
 import { vitalsView } from './vitals.mjs';
 import { opsView, runOps, runCleanup } from './ops.mjs';
 import { worksWall, buildMonthlyReport, listReports } from './works-report.mjs';
+import { kgView } from './kg.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -255,6 +256,8 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   app.get('/api/remote', async () => remoteView());
   app.post('/api/remote', async (req) => saveRemoteConfig(req.body ?? {}));
   // 她的画：按月归拢（梗图和表情单独分栏）
+  // 关系图：实体 + 事实（服务端算好固定布局，前端只画）
+  app.get('/api/kg', async () => kgView());
   app.get('/api/works/wall', async (req) => worksWall({ month: String(req.query?.month ?? '') }));
   // 月度小结：GET 读历史，POST 现算一份（会存到 state/reports/month-YYYY-MM.md）
   app.get('/api/reports', async () => listReports({}));
