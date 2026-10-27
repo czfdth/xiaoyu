@@ -6,7 +6,7 @@
 //   · 开机动画：片尾淡出、点一下随时跳过
 //   · 右下角圆钮开面板：开关 / 透明度 / 重播开机
 // 设置存在 localStorage；尊重 prefers-reduced-motion。
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 const KEY = 'xiaoyu.skin';
 const DEFAULTS = { enabled: true, veil: 0.14, boot: true };
@@ -43,17 +43,29 @@ function toggle() {
   if (cfg.value.enabled) playBoot();
 }
 
-function playBoot() {
+async function playBoot() {
   if (!cfg.value.boot || reduced) return;
   booting.value = true;
   bootReady.value = false;
+  // 关键修复：v-if 还没渲染时 bootEl 是 null，之前直接 return，动画永远不播
+  await nextTick();
   const el = bootEl.value;
-  if (!el) return;
+  if (!el) { booting.value = false; return; }
   try {
     el.currentTime = 0;
-    el.volume = 0.6;
-    void el.play();
-  } catch { /* 自动播放被拦就纯色淡出 */ }
+    // 浏览器禁止"有声自动播放"，先静音起播；要声音点一下按钮（那一下算用户手势）
+    el.muted = true;
+    el.volume = 0;
+    await el.play();
+  } catch {
+    booting.value = false;
+  }
+}
+
+function unmuteBoot() {
+  const el = bootEl.value;
+  if (!el) return;
+  try { el.muted = false; el.volume = 0.8; void el.play(); } catch { /* 忽略 */ }
 }
 
 function skipBoot() {
@@ -78,7 +90,8 @@ onMounted(() => {
     cfg.value.boot = false;
   }
   applyBodyClass();
-  if (enabled.value) {
+  // 开屏动画独立于背景皮肤：只要 boot 打开就先播（和原包 boot.enabled 的语义一致）
+  if (cfg.value.boot && !reduced) {
     // 等首帧再放开机动画，避免白闪
     setTimeout(playBoot, 300);
     setTimeout(() => { booting.value = false; }, 12000); // 兜底：卡住也别一直盖着
@@ -118,7 +131,7 @@ onUnmounted(() => {
         @loadeddata="onBootMeta"
         @error="skipBoot"
       />
-      <div class="boot-hint">正在启动… <b>点击画面跳过</b></div>
+      <div class="boot-hint">正在启动… <b>点击画面跳过</b><button class="boot-sound" @click.stop="unmuteBoot">开启声音</button></div>
     </div>
   </transition>
 
@@ -178,6 +191,7 @@ body.skin-on .card { border-radius: 16px; }
   position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
   font-size: 12px; color: rgba(220, 235, 255, .6); letter-spacing: .08em;
 }
+.boot-sound { margin-left: 10px; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(120,160,200,.35); background: rgba(21,21,23,.7); color: #9fc3e0; font-size: 11px; cursor: pointer; }
 .bootfade-leave-active { transition: opacity .8s ease; }
 .bootfade-leave-to { opacity: 0; }
 
