@@ -9,7 +9,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 const KEY = 'xiaoyu.skin';
-const DEFAULTS = { enabled: true, veil: 0.14, boot: true };
+const DEFAULTS = { enabled: true, veil: 0.14, boot: true, sound: true };
 
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; }
@@ -19,6 +19,7 @@ const cfg = ref(load());
 const panel = ref(false);
 const booting = ref(false);
 const bootReady = ref(false);
+const audioBlocked = ref(false);
 const bgEl = ref(null);
 const bootEl = ref(null);
 
@@ -47,13 +48,24 @@ async function playBoot() {
   if (!cfg.value.boot || reduced) return;
   booting.value = true;
   bootReady.value = false;
-  // 关键修复：v-if 还没渲染时 bootEl 是 null，之前直接 return，动画永远不播
+  audioBlocked.value = false;
   await nextTick();
   const el = bootEl.value;
   if (!el) { booting.value = false; return; }
+  el.currentTime = 0;
+  // 先按用户偏好尝试有声播放。浏览器没给过手势时会抛 NotAllowedError，
+  // 这时自动退到静音重试——画面不能没有，声音可以等用户点一下。
+  if (cfg.value.sound) {
+    try {
+      el.muted = false;
+      el.volume = 0.85;
+      await el.play();
+      return;
+    } catch {
+      audioBlocked.value = true;
+    }
+  }
   try {
-    el.currentTime = 0;
-    // 浏览器禁止"有声自动播放"，先静音起播；要声音点一下按钮（那一下算用户手势）
     el.muted = true;
     el.volume = 0;
     await el.play();
@@ -64,8 +76,11 @@ async function playBoot() {
 
 function unmuteBoot() {
   const el = bootEl.value;
+  cfg.value.sound = true;
+  save();
+  audioBlocked.value = false;
   if (!el) return;
-  try { el.muted = false; el.volume = 0.8; void el.play(); } catch { /* 忽略 */ }
+  try { el.muted = false; el.volume = 0.85; void el.play(); } catch { /* 忽略 */ }
 }
 
 function skipBoot() {
@@ -131,7 +146,7 @@ onUnmounted(() => {
         @loadeddata="onBootMeta"
         @error="skipBoot"
       />
-      <div class="boot-hint">正在启动… <b>点击画面跳过</b><button class="boot-sound" @click.stop="unmuteBoot">开启声音</button></div>
+      <div class="boot-hint">正在启动… <b>点击画面跳过</b><button v-if="audioBlocked" class="boot-sound" @click.stop="unmuteBoot">开启声音</button></div>
     </div>
   </transition>
 
@@ -153,6 +168,10 @@ onUnmounted(() => {
       <label class="row spread" style="margin-top: 8px">
         <span class="small">下次启播开机动画</span>
         <input v-model="cfg.boot" type="checkbox" @change="save" />
+      </label>
+      <label class="row spread" style="margin-top: 8px">
+        <span class="small">开屏声音</span>
+        <input v-model="cfg.sound" type="checkbox" @change="save" />
       </label>
       <button class="btn sm primary" style="margin-top: 10px; width: 100%" @click="playBoot">重播开机动画</button>
       <div class="hint" style="margin-top: 8px">素材来自 dsh-video-skin@0.1.5（MIT）。偏好设置只存在这台机器上。</div>
