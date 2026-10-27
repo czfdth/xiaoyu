@@ -63,9 +63,14 @@ export function resolveEntity(store, name) {
 }
 
 /**
- * 写入一条事实。同一个 subject+predicate 出现新值时，旧值标 validTo（**不删**，保留历史）。
+ * 写入一条事实。一对一的谓词（关系/称呼/在忙）出现新值时旧值标 validTo（**不删**，保留历史）；
+ * 多值谓词（喜欢/要求/承诺…）各自独立，不互相顶替。
  * @returns {{added:boolean, superseded:number}}
  */
+// 天然多值的谓词：喜欢的东西不止一个、承诺不止一件。
+// 一开始一律按"一个谓词一个值"处理，结果 60 条事实被顶到只剩 16 条（线上实测踩到）。
+const MULTI_VALUED = new Set(['喜欢', '不喜欢', '要求', '承诺', '聊过', '给过', '想要', '怕', '习惯', '常要求', '常让', '会说']);
+
 export function upsertFact(store, { subject, predicate, object, at = Date.now(), source = '', confidence = 0.6 } = {}) {
   const s = resolveEntity(store, subject);
   const p = String(predicate ?? '').trim();
@@ -78,8 +83,10 @@ export function upsertFact(store, { subject, predicate, object, at = Date.now(),
     return { added: false, superseded: 0 };
   }
   let superseded = 0;
-  for (const f of store.facts) {
-    if (f.subject === s && f.predicate === p && !f.validTo) { f.validTo = at; superseded += 1; }
+  if (!MULTI_VALUED.has(p)) {
+    for (const f of store.facts) {
+      if (f.subject === s && f.predicate === p && !f.validTo) { f.validTo = at; superseded += 1; }
+    }
   }
   store.facts.push({
     subject: s, predicate: p, object: o,

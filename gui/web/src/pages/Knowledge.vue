@@ -5,24 +5,37 @@ import { toastError, fmtTime } from '../store.js';
 import Card from '../components/Card.vue';
 
 const data = ref(null);
-const hover = ref(null);
+const focus = ref(null);
 const only = ref('');
 
-const nodes = computed(() => data.value?.layout?.nodes ?? []);
-const groups = computed(() => data.value?.layout?.groups ?? []);
+const net = computed(() => data.value?.network ?? { nodes: [], edges: [], width: 820, height: 620 });
+const nodes = computed(() => net.value.nodes ?? []);
+const edges = computed(() => net.value.edges ?? []);
+const nodeById = computed(() => new Map(nodes.value.map((n) => [n.id, n])));
+
+/** 跟当前焦点相连的边/点要高亮，其它变淡。 */
+function isLit(id) {
+  if (!focus.value) return true;
+  return id === focus.value || edges.value.some((e) =>
+    (e.source === focus.value && e.target === id) || (e.target === focus.value && e.source === id));
+}
+
+function edgeLit(e) {
+  if (!focus.value) return true;
+  return e.source === focus.value || e.target === focus.value;
+}
+
 const facts = computed(() => {
   const list = data.value?.facts ?? [];
-  return only.value ? list.filter((f) => f.predicate === only.value) : list;
-});
-const byPredicate = computed(() => {
-  const map = new Map();
-  for (const f of data.value?.facts ?? []) {
-    if (!map.has(f.predicate)) map.set(f.predicate, []);
-    map.get(f.predicate).push(f);
-  }
-  return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+  return only.value ? list.filter((f) => f.predicate === only.value || f.object === only.value) : list;
 });
 
+function typeColor(type) {
+  if (type === 'predicate') return '#a78bfa';
+  if (type === 'person') return '#4fd1c5';
+  if (type === 'group') return '#e3b341';
+  return '#7c8cf8';
+}
 function confColor(c) {
   if (c >= 0.8) return 'var(--ok)';
   if (c >= 0.6) return 'var(--brand)';
@@ -36,63 +49,60 @@ onMounted(load);
 </script>
 
 <template>
-  <Card title="关系图" :dim="data ? `${data.totals.facts} 条有效事实 · ${data.totals.entities} 个实体` : '读取中…'" style="margin-bottom: 14px">
+  <Card title="关系网络" :dim="data ? `${data.totals.nodes} 个节点 · ${data.totals.edges} 条关系` : '读取中…'" tight style="margin-bottom: 14px">
     <div v-if="!data" class="empty">读取中…</div>
     <div v-else-if="!nodes.length" class="empty">
-      <span class="big-ico">🕸️</span>还没有事实——先跑 <code>node scripts/extract-facts.mjs</code>
+      <span class="big-ico">🕸️</span>还没有关系——先跑 <code>node scripts/extract-facts.mjs</code>
     </div>
-    <div v-else class="web-wrap">
-      <svg class="web" viewBox="-230 -215 460 430">
-        <defs>
-          <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="#4fd1c5" stop-opacity=".55" />
-            <stop offset="100%" stop-color="#4fd1c5" stop-opacity="0" />
-          </radialGradient>
-        </defs>
-        <circle cx="0" cy="0" r="70" fill="url(#coreGlow)" />
-        <g v-for="n in nodes" :key="`${n.predicate}:${n.object}`">
-          <line :x1="0" :y1="0" :x2="n.x" :y2="n.y"
-                :stroke="confColor(n.confidence)" :stroke-width="n.confidence >= 0.8 ? 1.6 : 1"
-                :stroke-opacity="hover && hover !== n ? 0.15 : 0.5" />
-          <circle :cx="n.x" :cy="n.y" :r="n.confidence >= 0.8 ? 5 : 3.6"
-                  :fill="confColor(n.confidence)" class="node"
-                  @mouseenter="hover = n" @mouseleave="hover = null" />
-          <text :x="n.x * 1.18" :y="n.y * 1.18" class="lbl" :class="{ dim: hover && hover !== n }">
-            {{ n.object.length > 10 ? n.object.slice(0, 10) + '…' : n.object }}
-          </text>
+    <div v-else class="net-wrap">
+      <svg class="net" :viewBox="`0 0 ${net.width} ${net.height}`" @mouseleave="focus = null">
+        <line v-for="(e, i) in edges" :key="`e${i}`"
+              :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
+              :stroke="confColor(e.confidence)"
+              :stroke-opacity="edgeLit(e) ? 0.45 : 0.06"
+              :stroke-width="e.confidence >= 0.8 ? 1.3 : 0.9" />
+        <g v-for="n in nodes" :key="n.id" class="node"
+           :class="{ dim: !isLit(n.id) }"
+           @mouseenter="focus = n.id" @click="only = only === n.id ? '' : n.id">
+          <circle :cx="n.x" :cy="n.y" :r="n.r"
+                  :fill="typeColor(n.type)" fill-opacity="0.18"
+                  :stroke="typeColor(n.type)" stroke-width="1.4" />
+          <circle :cx="n.x" :cy="n.y" :r="Math.max(2, n.r * 0.38)" :fill="typeColor(n.type)" />
+          <text :x="n.x" :y="n.y - n.r - 5" class="lbl">{{ n.label }}</text>
         </g>
-        <circle cx="0" cy="0" r="26" class="core" />
-        <text x="0" y="5" class="core-lbl">{{ data.entities[0]?.name || '他' }}</text>
       </svg>
-      <div class="legend">
-        <div class="row" style="gap: 10px; flex-wrap: wrap">
-          <span class="tiny"><i class="dot" style="background: var(--ok)" /> 置信 ≥0.8</span>
-          <span class="tiny"><i class="dot" style="background: var(--brand)" /> 0.6~0.8</span>
-          <span class="tiny"><i class="dot" style="background: var(--warn)" /> &lt;0.6（推断）</span>
+      <div class="side">
+        <div class="row" style="gap: 12px; flex-wrap: wrap">
+          <span class="tiny"><i class="dot" style="background:#4fd1c5" /> 人</span>
+          <span class="tiny"><i class="dot" style="background:#e3b341" /> 群/号</span>
+          <span class="tiny"><i class="dot" style="background:#a78bfa" /> 谓词</span>`n          <span class="tiny"><i class="dot" style="background:#7c8cf8" /> 事/物</span>
         </div>
-        <div v-if="hover" class="hint" style="margin-top: 8px">
-          <b>{{ hover.predicate }}</b>：{{ hover.object }}
-          <span class="muted">· 置信 {{ Math.round(hover.confidence * 100) }}%<span v-if="hover.ageDays != null"> · {{ hover.ageDays }} 天前</span></span>
-          <div v-if="hover.source" class="dim small">原话：{{ hover.source }}</div>
+        <div class="hint" style="margin-top: 8px">
+          悬停一个点：只看它和它连着的关系；点一下：下方清单只看它。
         </div>
-        <div v-else class="hint" style="margin-top: 8px">把鼠标放在点上，能看到它来自哪句话。</div>
-        <div class="row" style="gap: 6px; flex-wrap: wrap; margin-top: 10px">
-          <button v-for="g in groups" :key="g.predicate" class="btn sm" :class="only === g.predicate ? 'primary' : 'ghost'"
-                  @click="only = only === g.predicate ? '' : g.predicate">
-            {{ g.predicate }} <span class="tiny">{{ g.count }}</span>
-          </button>
+        <div v-if="focus && nodeById.get(focus)" class="hint" style="margin-top: 10px">
+          <b style="color: var(--brand)">{{ focus }}</b>
+          <div class="muted small">连着 {{ edges.filter((e) => e.source === focus || e.target === focus).length }} 条关系</div>
+          <div v-for="(e, i) in edges.filter((x) => x.source === focus || x.target === focus).slice(0, 8)" :key="i" class="small dim">
+            {{ e.source === focus ? `${focus} —${e.predicate}→ ${e.target}` : `${e.source} —${e.predicate}→ ${focus}` }}
+          </div>
+        </div>
+        <div v-if="only" class="row" style="gap: 6px; margin-top: 10px">
+          <span class="badge">只看：{{ only }}</span>
+          <button class="btn sm ghost" @click="only = ''">清除</button>
         </div>
       </div>
     </div>
   </Card>
 
-  <Card title="事实清单" :dim="only ? `只看「${only}」` : ``">
+  <Card title="事实清单" :dim="only ? `只看「${only}」` : `${facts.length} 条`">
     <div v-if="!facts.length" class="empty">没有事实</div>
     <div v-else class="table-wrap">
       <table class="table">
-        <thead><tr><th>谓词</th><th>值</th><th>置信</th><th>时间</th><th>原话</th></tr></thead>
+        <thead><tr><th>主体</th><th>谓词</th><th>对象</th><th>置信</th><th>记录</th><th>原话</th></tr></thead>
         <tbody>
-          <tr v-for="(f, i) in facts" :key="i">
+          <tr v-for="(f, i) in facts.slice(0, 200)" :key="i">
+            <td class="mono">{{ f.subject }}</td>
             <td class="mono">{{ f.predicate }}</td>
             <td>{{ f.object }}</td>
             <td><span class="badge" :style="{ color: confColor(f.confidence) }">{{ Math.round(f.confidence * 100) }}%</span></td>
@@ -105,19 +115,17 @@ onMounted(load);
   </Card>
 
   <div v-if="data?.staleFacts?.length" class="hint" style="margin-top: 10px">
-    已经失效、被新值顶掉的旧事实 {{ data.totals.stale }} 条（保留历史，不删）。最近几条：
-    <span v-for="(s, i) in data.staleFacts" :key="i" class="muted"> {{ s.predicate }}={{ s.object }}<span v-if="i < data.staleFacts.length - 1">；</span></span>
+    被新值顶掉的旧事实 {{ data.totals.stale }} 条（保留历史，不删）。最近几条：
+    <span v-for="(s, i) in data.staleFacts" :key="i" class="muted">{{ s.predicate }}={{ s.object }}<span v-if="i < data.staleFacts.length - 1">；</span></span>
   </div>
 </template>
 
 <style scoped>
-.web-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
-.web { width: min(460px, 92vw); height: auto; flex: 0 0 auto; }
-.node { cursor: pointer; transition: r .12s ease; }
-.node:hover { r: 7; }
-.lbl { font-size: 9px; fill: var(--text-dim); text-anchor: middle; dominant-baseline: middle; }
-.lbl.dim { opacity: .25; }
-.core { fill: #0b1118; stroke: var(--brand); stroke-width: 1.6; }
-.core-lbl { fill: var(--brand); font-size: 13px; text-anchor: middle; font-weight: 650; }
-.legend { flex: 1; min-width: 240px; }
+.net-wrap { display: flex; gap: 16px; flex-wrap: wrap; padding: 12px; }
+.net { width: min(820px, 94vw); height: auto; flex: 1 1 520px; min-width: 320px; }
+.node { cursor: pointer; transition: opacity .12s ease; }
+.node.dim { opacity: .18; }
+.node:hover circle { stroke-width: 2.4; }
+.lbl { font-size: 10px; fill: var(--text-dim); text-anchor: middle; }
+.side { flex: 1 1 220px; min-width: 200px; }
 </style>
