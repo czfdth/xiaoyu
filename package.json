@@ -18,7 +18,7 @@
     "boot-check": "node src/bridge.js --check",
     "smoke": "node scripts/self-check.mjs",
     "test:link": "node scripts/test-snowluma-link.mjs",
-    "test:life": "node --test tests/security-leak.test.mjs tests/life-mechanisms.test.mjs tests/life-integration.test.mjs tests/reality.test.mjs tests/project-workflow.test.mjs tests/drawing-fallback.test.mjs tests/experience-learning.test.mjs tests/adaptive-execution.test.mjs tests/tts-adaptive-integration.test.mjs tests/continuity.test.mjs tests/security-replay.test.mjs tests/security-export.test.mjs tests/situation.test.mjs tests/situation-integration.test.mjs tests/gui-smoke.test.mjs tests/agency.test.mjs tests/agency-integration.test.mjs tests/agency-schedule.test.mjs tests/wake-token.test.mjs tests/context-budget.test.mjs tests/agent-delegate.test.mjs tests/semantic-index.test.mjs tests/vitals.test.mjs tests/spark.test.mjs tests/ops-alerts.test.mjs tests/ops-health.test.mjs tests/works-wall.test.mjs tests/consolidate.test.mjs tests/remote.test.mjs tests/catch-up.test.mjs",
+    "test:life": "node --test tests/security-leak.test.mjs tests/life-mechanisms.test.mjs tests/life-integration.test.mjs tests/reality.test.mjs tests/project-workflow.test.mjs tests/drawing-fallback.test.mjs tests/experience-learning.test.mjs tests/adaptive-execution.test.mjs tests/tts-adaptive-integration.test.mjs tests/continuity.test.mjs tests/security-replay.test.mjs tests/security-export.test.mjs tests/situation.test.mjs tests/situation-integration.test.mjs tests/gui-smoke.test.mjs tests/agency.test.mjs tests/agency-integration.test.mjs tests/agency-schedule.test.mjs tests/wake-token.test.mjs tests/context-budget.test.mjs tests/agent-delegate.test.mjs tests/semantic-index.test.mjs tests/vitals.test.mjs tests/spark.test.mjs tests/ops-alerts.test.mjs tests/ops-health.test.mjs tests/works-wall.test.mjs tests/consolidate.test.mjs tests/remote.test.mjs tests/catch-up.test.mjs tests/db.test.mjs",
     "test:pairing": "node scripts/test-pairing.mjs",
     "test:pairing-e2e": "node scripts/test-pairing-e2e.mjs",
     "dsh": "node scripts/dsh-setup.mjs",
@@ -27,7 +27,8 @@
     "test:ci": "npm run test:life && npm run test:pairing-e2e",
     "test:integration": "node --test tests/agency-integration.test.mjs",
     "drill:life": "node scripts/drill-life.mjs",
-    "consolidate": "node scripts/consolidate.mjs"
+    "consolidate": "node scripts/consolidate.mjs",
+    "db:sync": "node scripts/db-sync.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
