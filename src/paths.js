@@ -98,6 +98,8 @@ export const STATE_FILES = Object.freeze({
   opsReports: path.join(STATE_DIR, 'reports'),
   // 语义索引（scripts/build-semantic-index.mjs 产出）
   semanticIndex: path.join(STATE_DIR, 'semantic-index.json'),
+  // 事实层（实体 + 事实 + 时间/来源，见 src/knowledge-graph.js）
+  facts: path.join(STATE_DIR, 'memory', 'facts.json'),
   wants: path.join(STATE_DIR, 'wants.json'),
   dreams: path.join(STATE_DIR, 'dreams.jsonl'),
   fantasies: path.join(STATE_DIR, 'fantasies.jsonl'),

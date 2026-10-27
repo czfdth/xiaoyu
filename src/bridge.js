@@ -65,6 +65,9 @@ import { driftBody } from './vitals-drift.js';
 import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
 import {
+  emptyStore, loadStore, saveStore, upsertEntity, upsertFact, factsAbout, factsHint, factsFromSentences,
+} from './knowledge-graph.js';
+import {
   loadSlang,
   saveSlang,
   upsertSlangEntry,
@@ -3505,6 +3508,32 @@ async function main() {
    * 每 60 秒看一次 mtime，值没变就不写（recordVital 内部会判断）。
    */
   let vitalsWatchStarted = false;
+
+  // ── 事实层：他叫什么、在忙什么、喜欢什么（实体 + 事实，见 src/knowledge-graph.js）──
+  // 来源是 state/memory/long-term.json 的语句，启动时和它变化时重建一次；不调用模型。
+  let factStore = loadStore(STATE_FILES.facts);
+  let factsSourceMtime = 0;
+  function refreshFactsFromMemory() {
+    try {
+      const stat = fs.statSync(STATE_FILES.longTermMemory);
+      if (stat.mtimeMs === factsSourceMtime) return;
+      factsSourceMtime = stat.mtimeMs;
+      const items = JSON.parse(fs.readFileSync(STATE_FILES.longTermMemory, 'utf8').replace(/^\uFEFF/, ''))?.items ?? [];
+      const store = loadStore(STATE_FILES.facts);
+      upsertEntity(store, '他', { aliases: ['爸', '我爸', '栗子'] });
+      for (const fact of factsFromSentences(items)) upsertFact(store, fact);
+      factStore = store;
+      saveStore(STATE_FILES.facts, store);
+      log(`事实层：从记忆重建，当前  条事实`);
+    } catch { /* 没有长时记忆就先空着 */ }
+  }
+  function ownerFactsLine() {
+    try {
+      refreshFactsFromMemory();
+      const rows = factsAbout({ store: factStore, name: '他', limit: 3 });
+      return factsHint(rows, { max: 3 });
+    } catch { return ''; }
+  }
 
   // ── 运行告警：出事主动喊人（余额/连续出错/网关掉线/重启过多/备份过期）───────
   const ALERT_TEXT = {
@@ -11879,7 +11908,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
