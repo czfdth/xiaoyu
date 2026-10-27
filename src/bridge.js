@@ -3601,6 +3601,11 @@ async function main() {
       // 断线补偿：只在"从断开变回连上"的这一拍触发，延迟 5 秒等 WS 稳定
       try {
         const up = snowlumaHealth.connected === true;
+        if (!startupCatchUpDone) {
+          // 启动后补一次：上次崩/断线留下的空洞，靠这一下补回来（幂等，只看比水位新的）
+          startupCatchUpDone = true;
+          void runCatchUp();
+        }
         if (lastSeenConnected === false && up) {
           lastSeenConnected = true;
           setTimeout(() => { void runCatchUp(); }, 5000);
@@ -3700,13 +3705,38 @@ async function main() {
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
+  let startupCatchUpDone = false;
+  /** 这个会话在 journal 里最后一条消息的时间：轮换会清空 lastIncomingAt，但 journal 不会。 */
+  function journalLastAt(key) {
+    try {
+      const day = dayKey();
+      const dir = STATE_FILES.journalDir;
+      for (const candidate of [day, dayKey(Date.now() - 86400000)]) {
+        let text = '';
+        try { text = fs.readFileSync(path.join(dir, candidate + '.jsonl'), 'utf8'); } catch { continue; }
+        let max = 0;
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue;
+          let row;
+          try { row = JSON.parse(line); } catch { continue; }
+          if (String(row?.key ?? '') !== String(key)) continue;
+          const at = Number(row?.t) || 0;
+          if (at > max) max = at;
+        }
+        if (max) return max;
+      }
+    } catch { /* 读不到就算 0 */ }
+    return 0;
+  }
+
   async function runCatchUp() {
     try {
       let total = 0;
       for (const key of socialV2.conversations.keys()) {
         if (!isSessionAllowedInCurrentMode(key)) continue;
         const st = getSocialV2State(key);
-        const since = Number(st?.lastIncomingAt) || 0;
+        // 水位三级兜底：会话状态（轮换会清空）→ journal（不会丢）→ 30 分钟前
+        const since = Number(st?.lastIncomingAt) || journalLastAt(key) || (Date.now() - 30 * 60 * 1000);
         if (!since) continue;
         const [kind, id] = String(key).split(':');
         const r = await catchUpConversation({
@@ -3722,7 +3752,17 @@ async function main() {
         if (r.added) { total += r.added; appendActivity(key + ' 断线补偿：补回 ' + r.added + ' 条'); }
         else if (r.error) log('断线补偿：' + key + ' 拉历史失败（' + r.error + '）');
       }
-      if (total) { saveSocialV2State(); log('断线补偿完成：共补回 ' + total + ' 条'); }
+      if (total) {
+        saveSocialV2State();
+        log('断线补偿完成：共补回 ' + total + ' 条');
+        for (const key of socialV2.conversations.keys()) {
+          const st = getSocialV2State(key);
+          if (st.bootstrapSent) continue;
+          st.bootstrapSent = true;
+          saveSocialV2State();
+          scheduleWakeV2(key, 'bootstrap');
+        }
+      }
     } catch (error) {
       log('断线补偿失败：' + (error?.message ?? error));
     }
@@ -3751,6 +3791,11 @@ async function main() {
       // 断线补偿：只在"从断开变回连上"的这一拍触发，延迟 5 秒等 WS 稳定
       try {
         const up = snowlumaHealth.connected === true;
+        if (!startupCatchUpDone) {
+          // 启动后补一次：上次崩/断线留下的空洞，靠这一下补回来（幂等，只看比水位新的）
+          startupCatchUpDone = true;
+          void runCatchUp();
+        }
         if (lastSeenConnected === false && up) {
           lastSeenConnected = true;
           setTimeout(() => { void runCatchUp(); }, 5000);
