@@ -67,3 +67,24 @@ test('vitalsView / kgView / opsView 的返回符合各自契约', async () => {
   assert.deepEqual(shapeErrors(kg.kgView(), CONTRACT['/api/kg'].response), []);
   assert.deepEqual(shapeErrors(ops.opsView(), CONTRACT['/api/ops'].response), []);
 });
+
+// ── 新登记的接口 ─────────────────────────────────────────────────────
+test('overview / her / tokens / tools / config 的返回符合契约', async () => {
+  const data = await import('../gui/server/data.mjs');
+  const tokens = await import('../gui/server/tokens.mjs');
+  const tools = await import('../gui/server/tools.mjs');
+
+  const overview = await data.overview();
+  assert.deepEqual(shapeErrors(overview, CONTRACT['/api/overview'].response), []);
+
+  assert.deepEqual(shapeErrors(data.herState(), CONTRACT['/api/her'].response), []);
+  assert.deepEqual(shapeErrors(tokens.tokenOverview({ days: 7 }), CONTRACT['/api/tokens'].response), []);
+  assert.deepEqual(shapeErrors(await tools.toolCatalog(), CONTRACT['/api/tools'].response), []);
+  assert.deepEqual(shapeErrors(data.configView(), CONTRACT['/api/config'].response), []);
+  assert.deepEqual(shapeErrors({ days: data.journalDays().days }, CONTRACT['/api/journal/days'].response), []);
+});
+
+test('reports 返回数组，形状校验按整体类型判', () => {
+  assert.deepEqual(shapeErrors([], CONTRACT['/api/reports'].response), []);
+  assert.match(shapeErrors({}, CONTRACT['/api/reports'].response).join(' '), /数组/);
+});

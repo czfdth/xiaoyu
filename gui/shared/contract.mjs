@@ -59,6 +59,8 @@ export function validateBody(route, body) {
 /** 校验响应形状：缺字段/类型不对都报出来（测试和前端守卫共用）。 */
 export function shapeErrors(data, schema) {
   if (!schema) return [];
+  // 允许把整个返回值声明成一种类型（例如 /api/reports 直接返回数组）
+  if (typeof schema === 'string') return checkField('返回值', data, schema);
   if (!t.obj(data)) return ['返回不是对象'];
   const errors = [];
   for (const [key, spec] of Object.entries(schema)) {
@@ -103,6 +105,18 @@ export const CONTRACT = {
   '/api/kg': {
     response: { generatedAt: 'num', entities: 'arr', totals: 'obj', network: 'obj', facts: 'arr' },
   },
+  '/api/overview': {
+    response: {
+      root: 'str', ports: 'obj', capabilities: 'obj', gateway: 'obj', dsh: 'obj',
+      alerts: 'arr', her: 'obj', counts: 'obj', journal: 'obj', now: 'num',
+    },
+  },
+  '/api/her': { response: { inner: 'obj', body: 'obj', mood: 'obj', role: 'str' } },
+  '/api/tokens': { response: { days: 'arr', sessions: 'arr', budget: 'obj' } },
+  '/api/tools': { response: { groups: 'arr', total: 'num', enabledTotal: 'num', disabledTotal: 'num' } },
+  '/api/journal/days': { response: { days: 'arr' } },
+  '/api/config': { response: { config: 'obj', meta: 'obj', warnings: 'arr' } },
+  '/api/reports': { response: 'arr' },
   '/api/ops': {
     response: { disk: 'obj', keys: 'obj', drill: 'any', index: 'any' },
   },
