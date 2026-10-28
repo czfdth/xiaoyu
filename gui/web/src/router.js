@@ -12,6 +12,7 @@ import Config from './pages/Config.vue';
 import Logs from './pages/Logs.vue';
 import Security from './pages/Security.vue';
 import Setup from './pages/Setup.vue';
+import Search from './pages/Search.vue';
 
 export const routes = [
   { path: '/', name: 'overview', component: Overview, meta: { title: '概览', sub: '服务、引擎、她此刻的样子' } },
@@ -19,6 +20,7 @@ export const routes = [
   { path: '/life', name: 'life', component: Life, meta: { title: '一生', sub: '出生、天数、阶段、她经历过的事' } },
   { path: '/works', name: 'works', component: Works, meta: { title: '画', sub: '她画过的东西，按月归拢' } },
   { path: '/kg', name: 'kg', component: Knowledge, meta: { title: '关系', sub: '她记得的关于你的事，和它们有多确定' } },
+  { path: '/search', name: 'search', component: Search, meta: { title: '搜索', sub: '在她的记忆里找东西' } },
   { path: '/memory', name: 'memory', component: Memory, meta: { title: '记忆', sub: '日记、回忆录、梦、幻想、知识' } },
   { path: '/tools', name: 'tools', component: Tools, meta: { title: '工具', sub: '她现在能用的全部工具' } },
   { path: '/spend', name: 'spend', component: Spend, meta: { title: '花费', sub: 'token 花在哪，以及几个刹车' } },
