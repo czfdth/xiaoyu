@@ -41,6 +41,36 @@ function mb(v) {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`;
 }
 
+// 说说（Qzone 自动发）设置
+const qzone = ref(null);
+const qzoneForm = reactive({ probability: 0.5, maxPerDay: 3, minGapHours: 6, quietStartHour: 0, quietEndHour: 8, enabled: true });
+const savingQzone = ref(false);
+
+async function loadQzone() {
+  try {
+    const r = await get('/qzone');
+    qzone.value = r;
+    Object.assign(qzoneForm, r);
+  } catch { /* 读不到不影响页面 */ }
+}
+
+async function saveQzone() {
+  if (savingQzone.value) return;
+  savingQzone.value = true;
+  try {
+    const r = await post('/qzone', {
+      enabled: qzoneForm.enabled,
+      probability: Number(qzoneForm.probability),
+      maxPerDay: Number(qzoneForm.maxPerDay),
+      minGapHours: Number(qzoneForm.minGapHours),
+      quietStartHour: Number(qzoneForm.quietStartHour),
+      quietEndHour: Number(qzoneForm.quietEndHour),
+    });
+    qzone.value = r.qzone;
+    toast('说说设置已保存，下一次任务触发就生效');
+  } catch (e) { toastError(e); } finally { savingQzone.value = false; }
+}
+
 // 手机访问（局域网 + 口令）
 const remote = ref(null);
 const remoteForm = reactive({ password: '', port: 8765, allowWrite: false });
@@ -201,6 +231,7 @@ async function chooseAvatar(name) {
 onMounted(loadAvatar);
 onMounted(loadOps);
 onMounted(loadRemote);
+onMounted(loadQzone);
 
 async function createBackup() {
   backupBusy.value = true;
@@ -352,6 +383,44 @@ async function restoreFrom(name) {
         {{ saving ? '保存中…' : '保存修改' }}
       </button>
     </div>
+
+    <Card title="说说（QQ 空间）" :dim="qzone ? `概率 ${Math.round(qzone.probability * 100)}% · 每天最多 ${qzone.maxPerDay} 条` : '读取中…'">
+      <div class="stack" style="gap: 12px">
+        <div class="hint">
+          每半小时有一次机会，按概率决定发不发；再受「每天上限」和「最小间隔」约束。
+          改完不用重启，下一次任务触发就按新值走。
+        </div>
+        <label class="stack" style="gap: 4px">
+          <span class="muted small">放行概率 {{ Math.round(qzoneForm.probability * 100) }}%（越高越常发）</span>
+          <input v-model.number="qzoneForm.probability" type="range" min="0.05" max="1" step="0.05" />
+        </label>
+        <div class="row" style="gap: 12px; flex-wrap: wrap">
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">每天最多</span>
+            <input v-model.number="qzoneForm.maxPerDay" class="input" type="number" min="1" max="10" style="width: 90px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">最小间隔（小时）</span>
+            <input v-model.number="qzoneForm.minGapHours" class="input" type="number" min="1" max="24" style="width: 110px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">免打扰 从</span>
+            <input v-model.number="qzoneForm.quietStartHour" class="input" type="number" min="0" max="23" style="width: 80px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">到</span>
+            <input v-model.number="qzoneForm.quietEndHour" class="input" type="number" min="0" max="23" style="width: 80px" />
+          </label>
+          <label class="row" style="gap: 6px; align-items: center; margin-top: 16px">
+            <input v-model="qzoneForm.enabled" type="checkbox" />
+            <span class="small">启用自动发</span>
+          </label>
+        </div>
+        <div class="row">
+          <button class="btn primary sm" :disabled="savingQzone" @click="saveQzone">{{ savingQzone ? '保存中…' : '保存' }}</button>
+        </div>
+      </div>
+    </Card>
 
     <Card title="手机访问" :dim="remote?.enabled ? '已开启' : '默认关闭'">
       <div class="stack" style="gap: 10px">

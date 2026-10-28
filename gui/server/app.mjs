@@ -14,7 +14,7 @@ import { assertLocalRequest, HttpError } from './guard.mjs';
 import { validateBody } from '../shared/contract.mjs';
 import { loadRemoteConfig, verifySession, verifyPassword, signSession, SESSION_COOKIE, SESSION_DAYS, isLoopback } from './remote.js';
 import {
-  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig, skinView, saveSkin,
+  overview, configView, saveConfig, saveAvatar, runSetup, saveContextBudget, usageBudgetView, saveUsageLimits, remoteView, saveRemoteConfig, skinView, saveSkin, qzoneView, saveQzone,
   herState, journal, journalDays, journalSearch, memoryList, memoryRead, memoryCounts, memorySearch,
   securityBlocks,
   roleList, roleRead, roleWrite, logList, logTail,
@@ -257,6 +257,9 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   app.get('/api/remote', async () => remoteView());
   // 界面皮肤：设置存 config.json，换设备也一致
   app.get('/api/skin', async () => skinView());
+  // 说说设置：概率 / 每天上限 / 最小间隔 / 免打扰
+  app.get('/api/qzone', async () => qzoneView());
+  app.post('/api/qzone', async (req) => saveQzone(req.body ?? {}));
   app.post('/api/skin', async (req) => {
     // 契约校验：错在哪一字段直接说，别让面板拿到 500
     const verdict = validateBody('/api/skin', req.body ?? {});

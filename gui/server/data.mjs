@@ -310,6 +310,44 @@ export function saveContextBudget(patch = {}) {
   };
 }
 
+/** 说说（Qzone 自动发）的设置：概率、每天上限、最小间隔、免打扰时段。 */
+export function qzoneView() {
+  const cfg = readConfig();
+  const qz = cfg?.socialV2?.qzone?.auto ?? {};
+  return {
+    enabled: qz.enabled !== false,
+    probability: Number.isFinite(Number(qz.probability)) ? Number(qz.probability) : 0.25,
+    maxPerDay: Number.isFinite(Number(qz.maxPerDay)) ? Number(qz.maxPerDay) : 2,
+    minGapHours: Number.isFinite(Number(qz.minGapHours)) ? Number(qz.minGapHours) : 6,
+    quietStartHour: Number.isFinite(Number(qz.quietStartHour)) ? Number(qz.quietStartHour) : 0,
+    quietEndHour: Number.isFinite(Number(qz.quietEndHour)) ? Number(qz.quietEndHour) : 8,
+  };
+}
+
+/** 改说说设置：范围都钳制一遍，写前备份 config。 */
+export function saveQzone(patch = {}) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '参数必须是对象');
+  const next = qzoneView();
+  if ('enabled' in patch) next.enabled = patch.enabled === true;
+  const num = (key, min, max) => {
+    if (!(key in patch)) return;
+    const v = Number(patch[key]);
+    if (!Number.isFinite(v) || v < min || v > max) throw new HttpError(400, `${key} 要在 ${min}~${max}`);
+    next[key] = key === 'probability' ? Math.round(v * 100) / 100 : Math.trunc(v);
+  };
+  num('probability', 0, 1);
+  num('maxPerDay', 1, 10);
+  num('minGapHours', 1, 24);
+  num('quietStartHour', 0, 23);
+  num('quietEndHour', 0, 23);
+  const cfg = readConfig();
+  const backupFile = backup(CONFIG_FILE);
+  const merged = { ...cfg, socialV2: { ...(cfg.socialV2 ?? {}), qzone: { ...(cfg.socialV2?.qzone ?? {}), auto: next } } };
+  atomicWrite(CONFIG_FILE, `${JSON.stringify(merged, null, 2)}\n`);
+  resetEngineCache();
+  return { ok: true, backup: backupFile, qzone: next };
+}
+
 /** 界面皮肤：读 config.skin（缺省值兜底），给前端一套跨设备一致的设置。 */
 export function skinView() {
   const cfg = readConfig();
