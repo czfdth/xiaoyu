@@ -29,6 +29,7 @@ const NAV = [
   { to: '/life', icon: 'life', label: '一生' },
   { to: '/works', icon: 'life', label: '画' },
   { to: '/kg', icon: 'grid', label: '关系' },
+  { to: '/search', icon: 'book', label: '搜索' },
   { to: '/memory', icon: 'book', label: '记忆' },
   { to: '/tools', icon: 'spark', label: '工具' },
   { to: '/spend', icon: 'coin', label: '花费' },
