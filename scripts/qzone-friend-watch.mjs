@@ -2,12 +2,13 @@
 //
 // 由计划任务每 30 分钟跑一次。第一次运行只做"基线"（把已有说说记为已看过），
 // 之后只处理新出现的，不会翻旧账刷屏。
-import { APP_ROOT as ROOT, COMPANION_CONFIG } from '../src/paths.js';
+import { APP_ROOT as ROOT } from '../src/paths.js';
+import { readCompanion } from '../src/companion.js';
 import fs from 'node:fs';
 
 const STATE = ROOT + '/state/qzone-watch.json';
 const LOG = ROOT + '/state/qzone-watch.log';
-const COMPANION = COMPANION_CONFIG;
+const COMPANION = readCompanion();
 
 const FORCE = process.argv.includes('--force');
 const COMMENT_PROB = 0.5;

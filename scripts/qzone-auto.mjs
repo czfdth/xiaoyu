@@ -7,7 +7,8 @@
 //  · 触发不是定时发帖，而是「有时间窗口 + 概率 + 间隔 + 每日上限」四道闸门，
 //    所以看起来像"想发才发"，但统计上保持节奏。
 //  · 全流程不需要 DSH 会话：直接调 DeepSeek 生成 + SnowLuma 发出去，断了也不影响。
-import { APP_ROOT as ROOT, COMPANION_CONFIG } from '../src/paths.js';
+import { APP_ROOT as ROOT } from '../src/paths.js';
+import { readCompanion } from '../src/companion.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -36,7 +37,7 @@ function readDiary() {
 }
 
 const bridge = readJson(BRIDGE_CONFIG, {});
-const companion = readJson(COMPANION_CONFIG, {});
+const companion = readCompanion();
 const state = readJson(STATE_FILE, { usedDiaryTs: [], posts: [] });
 
 const qz = bridge.socialV2?.qzone?.auto ?? {};

@@ -1,3 +1,4 @@
+import { readCompanion } from './companion.js';
 import { situationView, contextualContinuity, executeSituationSend } from './situation.js';
 import { askAgent } from './agent-delegate.js';
 import { semanticSearch } from './semantic-index.js';
@@ -3806,7 +3807,7 @@ async function translateForDraw(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return text;
   try {
     const companionPath = COMPANION_CONFIG;
-    const cfgc = JSON.parse(fs.readFileSync(companionPath, 'utf8').replace(/^\uFEFF/, ''));
+    const cfgc = readCompanion();
     if (!cfgc?.apiKey) return text;
     const base = String(cfgc.baseUrl ?? 'https://api.deepseek.com/v1').replace(/\/+$/, '');
     const res = await fetch(base + '/chat/completions', {
