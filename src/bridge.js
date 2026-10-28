@@ -3604,6 +3604,7 @@ async function main() {
     backupStale: '她的备份超过 48 小时没更新。',
     keyLeak: '日志里出现了疑似 API 密钥，建议立刻轮换。',
     indexRot: '语义检索的召回率掉下来了（索引可能过期或换了模型）。',
+    ritualStale: '她的日常断供了（日记/梦超过两天没更新）。',
   };
   /** 告警怎么送到人：用她自己的号私聊主人（不经过智能体）。 */
   async function notifyOwnerAlert(alert) {
@@ -3697,6 +3698,33 @@ async function main() {
           if (changed) writeOpsState({ nightRituals: done });
         }
       } catch (error) { log('夜间日常巡检失败：' + (error?.message ?? error)); }
+      // 日常断供检测：日记/梦超过 2 天没有，就挂告警——这类静默失败最难发现（梦停了两天才被发现）
+      try {
+        const nowMs = Date.now();
+        if (!ritualCheckAt || nowMs - ritualCheckAt > 60 * 60 * 1000) {
+          ritualCheckAt = nowMs;
+          const stale = [];
+          const diaryDir = STATE_FILES.diaryDir;
+          let newestDiary = 0;
+          try {
+            for (const name of fs.readdirSync(diaryDir)) {
+              if (!/^\d{4}-\d{2}-\d{2}\.md$/.test(name)) continue;
+              const at = new Date(name.slice(0, 10) + 'T00:00:00+08:00').getTime();
+              if (at > newestDiary) newestDiary = at;
+            }
+          } catch { /* 没日记目录 */ }
+          if (newestDiary && nowMs - newestDiary > 2 * 86400000) stale.push('日记');
+          try {
+            const dreams = fs.readFileSync(STATE_FILES.dreams, 'utf8').split('\n').filter(Boolean);
+            const last = dreams.length ? JSON.parse(dreams[dreams.length - 1]) : null;
+            const lastAt = Number(last?.at) || 0;
+            if (lastAt && nowMs - lastAt > 2 * 86400000) stale.push('梦');
+          } catch { /* 没梦文件 */ }
+          if (stale.length) {
+            alertCenter.report('ritualStale', stale.join('、') + ' 超过两天没有新内容');
+          }
+        }
+      } catch { /* 检测失败不影响巡检 */ }
       // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
       try {
         const now = Date.now();
@@ -3828,6 +3856,7 @@ async function main() {
     } catch { /* 通知失败不影响主流程 */ }
   }
   let dbSyncAt = 0;
+  let ritualCheckAt = 0;
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
