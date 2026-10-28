@@ -12,7 +12,7 @@
 
 export const CONTEXT_BUDGET_DEFAULTS = Object.freeze({
   // 单个回合最多走多少步（0 = 不限制）。正常聊天 1~6 步收尾，20~30 步基本是空转。
-  maxStepsPerTurn: 30,
+  maxStepsPerTurn: 12,
   // 单步 prompt 达到多少 token 就该换新会话（0 = 不轮换）。
   rotatePromptTokens: 45000,
   // 会话至少完整跑过多少个回合才允许轮换：太短的会话轮换只会白付一次冷启动 cacheMiss。
