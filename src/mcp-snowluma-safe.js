@@ -498,6 +498,68 @@ function toolDisabledNow(name) {
 //
 // 为什么默认关闭：它花的是**另一个**账号/订阅的额度，而且对方是编码 agent —— 能读文件、能跑命令。
 // 群里任何人只要能影响她，就能借它去动本机的东西，所以这里只认管理员私聊，并且要显式打开
+// ── 读文档 ────────────────────────────────────────────────────────────────
+// 她"看不懂 Word/PDF"不是模型的问题，是文字从没进过上下文。
+// 这里把抽取做成工具：给路径，回文字（限 6000 字，避免一口气撑爆上下文）。
+server.tool(
+  'qq_read_file',
+  '读一个本地文档的正文：txt/md/json/csv/log 直读，docx/pptx/xlsx 解压抓文字，pdf 尽力而为（扫描版通常读不到）。'
+  + '只允许读桌面/文档/下载/工作目录里的文件；没有这个工具她只能看到「[文件]」两个字。',
+  {
+    path: z.string().describe('文件的完整路径'),
+    maxChars: z.number().optional().describe('最多返回多少字，默认 6000'),
+  },
+  async ({ path: filePath, maxChars }) => {
+    const limit = Math.max(500, Math.min(20000, Number(maxChars) || 6000));
+    try {
+      const { extractDocumentText } = await import('../scripts/read-doc.mjs').catch(() => ({}));
+      if (!extractDocumentText) {
+        return { content: [{ type: 'text', text: '文档抽取模块不可用（scripts/read-doc.mjs 未导出 extractDocumentText）' }], isError: true };
+      }
+      const r = extractDocumentText(filePath);
+      const text = String(r.text ?? '').slice(0, limit);
+      if (!text.trim()) {
+        return { content: [{ type: 'text', text: `没抽到文字（${r.kind}）：可能是扫描版 PDF 或纯图片文档。` }] };
+      }
+      return { content: [{ type: 'text', text: `# ${r.kind} ｜ ${r.chars} 字${r.chars > limit ? `（只给前 ${limit} 字）` : ''}\n\n${text}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: '读取失败：' + (error?.message ?? error) }], isError: true };
+    }
+  },
+);
+
+// ── 搜自己的记忆 ──────────────────────────────────────────────────────────
+// 面板有全局搜索，她自己却没有——这个工具让她能翻聊天记录、事实、日记、知识库。
+server.tool(
+  'qq_search_memory',
+  '在自己的记忆里搜关键词：聊天记录 / 她记得的事实 / 日记 / 知识库。'
+  + '想不起来"你上次说过什么"时用它，比翻上下文可靠。',
+  {
+    q: z.string().describe('关键词'),
+    limit: z.number().optional().describe('每类最多几条，默认 5'),
+  },
+  async ({ q, limit }) => {
+    try {
+      const { searchAll } = await import('../gui/server/search.mjs');
+      const r = searchAll(String(q ?? ''), { limit: Math.max(1, Math.min(20, Number(limit) || 5)) });
+      if (!r.total) return { content: [{ type: 'text', text: `没搜到「${q}」。` }] };
+      const titles = { journal: '聊天记录', fact: '记得的事', diary: '日记', knowledge: '知识库' };
+      const lines = [`搜「${q}」共 ${r.total} 条：`];
+      for (const [kind, arr] of Object.entries(r.groups)) {
+        if (!arr.length) continue;
+        lines.push('', `【${titles[kind] ?? kind}】`);
+        for (const item of arr) {
+          const when = item.at ? new Date(item.at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : (item.day ?? '');
+          lines.push(`- ${when} ${item.who ? '[' + item.who + '] ' : ''}${item.text}`);
+        }
+      }
+      return { content: [{ type: 'text', text: lines.join('\n').slice(0, 4000) }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: '搜索失败：' + (error?.message ?? error) }], isError: true };
+    }
+  },
+);
+
 // `socialV2.tools.askAgent` 才会注册（不打开时连工具描述都不发，不占上下文）。
 server.tool(
   'qq_ask_agent',

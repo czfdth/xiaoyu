@@ -16,9 +16,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const file = process.argv[2];
+const invokedDirectly = !!process.argv[2] && process.argv[1]?.endsWith('read-doc.mjs');
+const file = invokedDirectly ? process.argv[2] : '';
 const asJson = process.argv.includes('--json');
-if (!file) {
+if (invokedDirectly && !file) {
   console.error('用法: node scripts/read-doc.mjs <文件> [--json]');
   process.exit(1);
 }
@@ -108,4 +109,19 @@ if (asJson) {
 } else {
   console.log(`# ${path.basename(abs)}（${kind}，${text.length} 字）\n`);
   console.log(text.slice(0, 4000) || '（没抽到文字：可能是扫描版 PDF 或纯图片文档）');
+}
+
+// ── 给工具用的入口 ────────────────────────────────────────────────────────
+// 返回 { file, kind, chars, text }，不打印、不退出，供 MCP 工具调用。
+export function extractDocumentText(target) {
+  const abs = path.resolve(String(target ?? ''));
+  if (!fs.existsSync(abs)) throw new Error('文件不存在: ' + abs);
+  const ext = path.extname(abs).toLowerCase();
+  let kind = 'text';
+  let text = '';
+  if (['.docx', '.pptx', '.xlsx'].includes(ext)) { kind = ext.slice(1); text = readOoxml(abs); }
+  else if (ext === '.pdf') { kind = 'pdf'; text = readPdf(abs); }
+  else { kind = 'text'; text = fs.readFileSync(abs, 'utf8'); }
+  text = String(text).replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { file: abs, kind, chars: text.length, text };
 }
