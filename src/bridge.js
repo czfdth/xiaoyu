@@ -69,6 +69,7 @@ import { rhythmFactor, rhythmNote } from './rhythm.js';
 import { weeklyReviewLine } from './review.js';
 import { failureLine } from './failures.js';
 import { activate } from './activation.js';
+import { recordInterrupted, interruptedLine } from './interrupted.js';
 import { openDb, syncJournal, closeDb } from './db.js';
 import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
@@ -2695,6 +2696,7 @@ async function main() {
       const key = reverse.get(sessionId);
       if (!key) return;
       log(`⛔ 上下文预算：${key} 单回合已 ${verdict.steps} 步（上限 ${contextBudget.limits.maxStepsPerTurn}），打断这一回合`);
+      recordInterrupted({ key, sessionId, steps: verdict.steps, reason: 'context-budget' });
       appendActivity(`${key} [context-budget] 单回合 ${verdict.steps} 步超限，已打断`);
       void withTimeout(api.stopSessionWork(sessionId), DSH_CONTROL_TIMEOUT_MS, 'stopSessionWork')
         .catch((error) => log(`⚠️ 上下文预算打断失败 ${key}：${error?.message ?? error}`));
@@ -12270,7 +12272,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + reasonHintLine(reason) + failureLine() + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
