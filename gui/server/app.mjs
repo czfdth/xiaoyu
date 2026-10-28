@@ -357,21 +357,6 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
     prefix: '/',
     wildcard: false,
     index: ['index.html'],
-    // index.html 绝不能被缓存：它里面写着带 hash 的 JS 文件名。浏览器一旦缓存了旧 html，
-    // 就会去请求已经不存在的 assets/index-OLD.js → 整站白屏，只有 Ctrl+F5 能救。
-    // 这个坑今天踩了两次（加搜索页后"打不开"，回滚后又莫名好了）。
-    setHeaders(res, filePath) {
-      // @fastify/static 在不同版本里传进来的可能是裸 ServerResponse，也可能是 Fastify Reply，
-      // 两者设置响应头的方法名不一样，这里统一一下（线上真踩到过 "res.setHeader is not a function"）。
-      const set = typeof res?.setHeader === 'function'
-        ? (k, v) => res.setHeader(k, v)
-        : (k, v) => res?.header?.(k, v);
-      if (filePath.endsWith('.html')) {
-        set('Cache-Control', 'no-store, must-revalidate');
-      } else if (filePath.includes('assets')) {
-        set('Cache-Control', 'public, max-age=31536000, immutable');
-      }
-    },
   });
 
   app.setNotFoundHandler((req, reply) => {
