@@ -40,7 +40,7 @@ foreach ($dir in $include) {
   Copy-Item $from $to -Recurse -Force
 }
 
-foreach ($file in @('package.json', 'install.ps1', 'README.md', 'LICENSE', 'gui\server.mjs')) {
+foreach ($file in @('package.json', 'install.ps1', 'README.md', 'LICENSE', 'gui\server.mjs', 'gui\package.json', 'gui\package-lock.json')) {
   $from = Join-Path $Root $file
   if (Test-Path $from) { Copy-Item $from (Join-Path $Stage $file) -Force }
 }
@@ -52,6 +52,14 @@ Push-Location $Stage
 try {
   & npm install --omit=dev --no-audit --no-fund | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'npm install 失败（stage 里的依赖没装好）' }
+
+  # 控制台自己的依赖（fastify / @fastify/static）在 gui/package.json 里，
+  # 不装它们，装完之后「打开管家」会因为找不到 fastify 直接起不来。
+  if (Test-Path (Join-Path $Stage 'gui\package.json')) {
+    Write-Host '安装控制台依赖（gui）…'
+    & npm --prefix (Join-Path $Stage 'gui') install --omit=dev --no-audit --no-fund | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'gui 依赖安装失败' }
+  }
 } finally {
   Pop-Location
 }
