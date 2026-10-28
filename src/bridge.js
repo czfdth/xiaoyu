@@ -68,6 +68,7 @@ import { wanderLine } from './wander.js';
 import { rhythmFactor, rhythmNote } from './rhythm.js';
 import { weeklyReviewLine } from './review.js';
 import { failureLine } from './failures.js';
+import { activate } from './activation.js';
 import { openDb, syncJournal, closeDb } from './db.js';
 import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
@@ -3623,6 +3624,11 @@ async function main() {
     try {
       refreshFactsFromMemory();
       const rows = factsAbout({ store: factStore, name: '他', limit: 3 });
+      // 激活扩散：先只"记录"、不"排序"。看热度涨起来的样子对不对，再决定要不要影响回忆顺序。
+      try {
+        const neighbors = factsAbout({ store: factStore, name: '他', limit: 12 }).filter((f) => !rows.includes(f));
+        activate(rows, { neighbors });
+      } catch { /* 热度记录失败不影响这一行输出 */ }
       return factsHint(rows, { max: 3 });
     } catch { return ''; }
   }
