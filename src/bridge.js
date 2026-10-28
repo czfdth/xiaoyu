@@ -64,6 +64,7 @@ import { addUsage, loadDaily, saveDaily, shouldBlockAutonomous, normalizeLimits,
 import { driftBody } from './vitals-drift.js';
 import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
 import { catchUpConversation } from './catch-up.js';
+import { openDb, syncJournal, closeDb } from './db.js';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
 import {
   emptyStore, loadStore, saveStore, upsertEntity, upsertFact, factsAbout, factsHint, factsFromSentences,
@@ -3598,6 +3599,18 @@ async function main() {
       log(`日账：从账本补回今天的 ${sum} token`);
 
       flushDaily();
+      // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
+      try {
+        const now = Date.now();
+        if (!dbSyncAt || now - dbSyncAt > 10 * 60 * 1000) {
+          dbSyncAt = now;
+          const db = openDb(path.join(STATE_DIR, 'life.db'));
+          try {
+            const r = syncJournal(db, STATE_FILES.journalDir);
+            if (r.inserted > 0) log('SQLite 索引：补 ' + r.inserted + ' 条');
+          } finally { closeDb(db); }
+        }
+      } catch (error) { log('SQLite 同步失败：' + (error?.message ?? error)); }
       // 断线补偿：只在"从断开变回连上"的这一拍触发，延迟 5 秒等 WS 稳定
       try {
         const up = snowlumaHealth.connected === true;
@@ -3702,6 +3715,7 @@ async function main() {
    * 告警巡检：网关掉线、备份过期、日账落盘。一分钟一次，每项自带冷却。
    */
   let gatewayDownSince = 0;
+  let dbSyncAt = 0;
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
@@ -12477,6 +12491,10 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       const pendingThoughts = Array.isArray(st.pendingThoughts) ? st.pendingThoughts.filter((t) => t && (!t.expiresAt || Date.now() < Number(t.expiresAt))).length : 0;
       if (pendingThoughts > 0) prob = Math.min(1, prob * 1.4);
       if (st.lastAiReplyAt && Date.now() - Number(st.lastAiReplyAt) < 30 * 60 * 1000) prob *= 0.5;
+      // 沉默越久越主动（她不是机器，隔一天没联系会更想说话）
+      const silenceHours = (Date.now() - (Number(st.lastIncomingAt) || Date.now())) / 3600000;
+      const silenceBoost = silenceHours >= 24 ? 2.2 : silenceHours >= 6 ? 1.7 : silenceHours >= 1 ? 1.2 : 0.6;
+      prob = Math.min(0.9, prob * silenceBoost);
       const hour = new Date().getHours();
       if (hour >= 23 || hour < 8) prob *= 0.3;
       const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
