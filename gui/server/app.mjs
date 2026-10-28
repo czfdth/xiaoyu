@@ -362,6 +362,26 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
     index: ['index.html'],
   });
 
+  // ── 静态资源兜底：直接读磁盘，不依赖启动时的文件表 ──────────────────────
+  app.get('/assets/*', async (req, reply) => {
+    const rel = String(req.url || '').replace(/^\/assets\//, '').split('?')[0];
+    const base = path.join(distDir, 'assets');
+    const full = path.normalize(path.join(base, rel));
+    if (!full.startsWith(base)) return reply.code(403).send({ error: '路径越界' });
+    if (!fs.existsSync(full)) return reply.code(404).send({ error: '资源不存在' });
+    const ext = path.extname(full).toLowerCase();
+    const type = ext === '.js' ? 'application/javascript; charset=utf-8'
+      : ext === '.css' ? 'text/css; charset=utf-8'
+      : ext === '.map' ? 'application/json; charset=utf-8'
+      : ext === '.svg' ? 'image/svg+xml'
+      : ext === '.png' ? 'image/png'
+      : ext === '.woff2' ? 'font/woff2'
+      : 'application/octet-stream';
+    // 文件名带 hash，可以长缓存
+    reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+    return reply.type(type).send(fs.createReadStream(full));
+  });
+
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api')) {
       reply.code(404).send({ error: '接口不存在' });
