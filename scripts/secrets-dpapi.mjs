@@ -29,43 +29,50 @@ const fileArg = (() => {
 const target = fileArg ? path.resolve(fileArg) : COMPANION_CONFIG;
 const encFile = `${target}.dpapi`;
 
-function psFile(script) {
-  // 关键：不要靠 stdout 传中文——PowerShell 5.1 会按控制台代码页输出，中文会被压坏。
-  // 统一走临时文件，明确 UTF-8。
-  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+function psRun(commands) {
+  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', commands.join('; ')], {
     encoding: 'utf8',
-    timeout: 30000,
-  }).trim();
+    timeout: 60000,
+  });
 }
 
-function dpapiEncrypt(plain) {
-  const tmpInput = path.join(os.tmpdir(), 'xy-dpapi-in-' + process.pid + '.txt');
-  const tmpOut = path.join(os.tmpdir(), 'xy-dpapi-out-' + process.pid + '.txt');
+// 用 .NET 的 ProtectedData（DPAPI）而不是 ConvertTo-SecureString：
+// 后者对文本格式挑剔（实测报 "Input string was not in a correct format"），
+// ProtectedData 直接吃字节、吐 base64，不经过任何文本编码转换。
+function dpapiProtect(plain) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xy-dp-'));
+  const inFile = path.join(dir, 'in.bin');
+  const outFile = path.join(dir, 'out.txt');
   try {
-    fs.writeFileSync(tmpInput, plain, 'utf8');
-    psFile(`$t = Get-Content -LiteralPath '${tmpInput.replace(/'/g, "''")}' -Raw -Encoding UTF8; ` +
-      `$s = ConvertTo-SecureString -String $t -AsPlainText -Force; ` +
-      `ConvertFrom-SecureString $s | Set-Content -LiteralPath '${tmpOut.replace(/'/g, "''")}' -Encoding ASCII`);
-    return fs.readFileSync(tmpOut, 'utf8').trim();
-  } finally {
-    for (const f of [tmpInput, tmpOut]) { try { fs.unlinkSync(f); } catch { /* 忽略 */ } }
-  }
+    fs.writeFileSync(inFile, Buffer.from(plain, 'utf8'));
+    psRun([
+      'Add-Type -AssemblyName System.Security',
+      `$b = [IO.File]::ReadAllBytes('${inFile}')`,
+      `$p = [Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser')`,
+      `[IO.File]::WriteAllText('${outFile}', [Convert]::ToBase64String($p), [Text.Encoding]::ASCII)`,
+    ]);
+    return fs.readFileSync(outFile, 'utf8').trim();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
-function dpapiDecrypt(blob) {
-  const tmpBlob = path.join(os.tmpdir(), 'xy-dpapi-blob-' + process.pid + '.txt');
-  const tmpOut = path.join(os.tmpdir(), 'xy-dpapi-plain-' + process.pid + '.txt');
+function dpapiUnprotect(blob) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xy-dp-'));
+  const inFile = path.join(dir, 'in.txt');
+  const outFile = path.join(dir, 'out.bin');
   try {
-    fs.writeFileSync(tmpBlob, blob, 'ascii');
-    psFile(`$sec = ConvertTo-SecureString (Get-Content -LiteralPath '${tmpBlob.replace(/'/g, "''")}' -Raw); ` +
-      `$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec); ` +
-      `try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }; ` +
-      `Set-Content -LiteralPath '${tmpOut.replace(/'/g, "''")}' -Value $plain -Encoding UTF8 -NoNewline`);
-    return fs.readFileSync(tmpOut, 'utf8').replace(/^\uFEFF/, '');
-  } finally {
-    for (const f of [tmpBlob, tmpOut]) { try { fs.unlinkSync(f); } catch { /* 忽略 */ } }
-  }
+    fs.writeFileSync(inFile, String(blob).trim(), 'ascii');
+    psRun([
+      'Add-Type -AssemblyName System.Security',
+      `$s = [IO.File]::ReadAllText('${inFile}', [Text.Encoding]::ASCII)`,
+      `$p = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($s), $null, 'CurrentUser')`,
+      `[IO.File]::WriteAllBytes('${outFile}', $p)`,
+    ]);
+    return fs.readFileSync(outFile, 'utf8');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
+
+function dpapiEncrypt(plain) { return dpapiProtect(plain); }
+function dpapiDecrypt(blob) { return dpapiUnprotect(blob); }
 
 function status() {
   const plain = fs.existsSync(target);
@@ -92,7 +99,7 @@ if (cmd === 'status') {
   const same = back === plain;
   console.log(`加密长度 ${blob.length}  解密一致 ${same ? '✅' : '❌'}`);
   if (!same) process.exit(1);
-  const key = (() => { try { return JSON.parse(plain).apiKey ? '有 apiKey' : '没有 apiKey'; } catch { return '解析失败'; } })();
+  const key = (() => { try { return JSON.parse(plain.replace(/^\uFEFF/, '')).apiKey ? '有 apiKey' : '没有 apiKey'; } catch { return '解析失败'; } })();
   console.log(`副本内容 ${key}`);
 } else if (cmd === 'encrypt') {
   if (!fs.existsSync(target)) { console.error('没有可加密的配置文件'); process.exit(1); }
