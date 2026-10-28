@@ -83,15 +83,24 @@ export function upsertFact(store, { subject, predicate, object, at = Date.now(),
     return { added: false, superseded: 0 };
   }
   let superseded = 0;
+  // 新事实的"身份"。旧事实被替代时记下它，才能把"以前是 A、后来变成 B"串成时间线。
+  const ref = `${s}|${p}|${o}|${at}`;
   if (!MULTI_VALUED.has(p)) {
     for (const f of store.facts) {
-      if (f.subject === s && f.predicate === p && !f.validTo) { f.validTo = at; superseded += 1; }
+      if (f.subject === s && f.predicate === p && !f.validTo) {
+        f.validTo = at;
+        f.supersededBy = ref;
+        superseded += 1;
+      }
     }
   }
   store.facts.push({
     subject: s, predicate: p, object: o,
     at, lastSeenAt: at, source: String(source ?? '').slice(0, 200),
     confidence: Math.min(1, Math.max(0, Number(confidence) || 0.6)),
+    // validFrom：这件事从什么时候开始为真。老数据没这个字段，读的时候当 undefined 处理。
+    validFrom: at,
+    ref,
   });
   return { added: true, superseded };
 }
