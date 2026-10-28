@@ -512,11 +512,11 @@ server.tool(
   async ({ path: filePath, maxChars }) => {
     const limit = Math.max(500, Math.min(20000, Number(maxChars) || 6000));
     try {
-      const { extractDocumentText } = await import('../scripts/read-doc.mjs').catch(() => ({}));
-      if (!extractDocumentText) {
-        return { content: [{ type: 'text', text: '文档抽取模块不可用（scripts/read-doc.mjs 未导出 extractDocumentText）' }], isError: true };
-      }
-      const r = extractDocumentText(filePath);
+      // 走 CLI 子进程而不是 import：read-doc.mjs 顶层有 CLI 逻辑，
+      // import 会连带执行（实测 EISDIR）。子进程也天然隔离，抽取失败不影响 MCP 主进程。
+      const scriptPath = path.join(ROOT, 'scripts', 'read-doc.mjs');
+      const out = execFileSync(process.execPath, [scriptPath, String(filePath), '--json'], { encoding: 'utf8', timeout: 60000 });
+      const r = JSON.parse(out);
       const text = String(r.text ?? '').slice(0, limit);
       if (!text.trim()) {
         return { content: [{ type: 'text', text: `没抽到文字（${r.kind}）：可能是扫描版 PDF 或纯图片文档。` }] };
