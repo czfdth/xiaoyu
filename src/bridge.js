@@ -8502,6 +8502,12 @@ async function main() {
   // 分条发送：与 sendToQQ 共用同一 sendChain，严格顺序；条间随机间隔，
   // 有概率使用长间隔（错落感）；最后一条后不再 sleep。
   function sendBurstToQQ(key, messages, socialCfgOrMin, maybeMax) {
+    // 配置层限制：send.maxBubbles = 1 时，把一次调用里的多条合并成一条。
+    // 起因：模型每次都把两个意思各发一条（"干嘛…" + "我刚在发呆…"），
+    // 用户只想收到一条完整的话。
+    if (Number(cfg.socialV2?.send?.maxBubbles) === 1 && Array.isArray(messages) && messages.length > 1) {
+      messages = [messages.join('\n')];
+    }
     const assertSendAllowed = captureSendGuard(key);
     const [kind, id] = key.split(':');
     let min, max, longProb = 0, longMin = 0, longMax = 0;
