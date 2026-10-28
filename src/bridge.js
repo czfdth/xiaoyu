@@ -3725,6 +3725,16 @@ async function main() {
           }
         }
       } catch { /* 检测失败不影响巡检 */ }
+      // 日志轮转：每天一次，清 14 天前的日志 / 30 天前的旧备份（cleanup 早写好了，只是没人调用）
+      try {
+        const nowMs = Date.now();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        if (hour >= 5 && (!logRotateAt || nowMs - logRotateAt > 20 * 3600 * 1000)) {
+          logRotateAt = nowMs;
+          const result = cleanup({ home: ROOT, keepBackupDays: 30, keepLogDays: 14, dryRun: false });
+          if (result.removed.length) log('日志轮转：清掉 ' + result.removed.length + ' 个文件（' + result.mb + ' MB）');
+        }
+      } catch (error) { log('日志轮转失败：' + (error?.message ?? error)); }
       // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
       try {
         const now = Date.now();
@@ -3857,6 +3867,7 @@ async function main() {
   }
   let dbSyncAt = 0;
   let ritualCheckAt = 0;
+  let logRotateAt = 0;
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
