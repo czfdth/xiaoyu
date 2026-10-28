@@ -230,13 +230,11 @@ export const PC_ROOTS = Object.freeze([...new Set(
   [DESKTOP_DIR, DOCUMENTS_DIR, DOWNLOADS_DIR, APP_ROOT].filter(Boolean)
 )]);
 
-// 可选：复用人格卡/翻译用的 companion 配置（装了 ai-companion-kit 才有）。
 // 优先级：环境变量 > 数据根下的 companion.json（迁移时拷进来）> 兄弟目录里的 companion。
 export const COMPANION_CONFIG = (() => {
   const candidates = [
     process.env.XIAOYU_COMPANION_CONFIG ? path.resolve(process.env.XIAOYU_COMPANION_CONFIG) : '',
     path.join(APP_ROOT, 'companion.json'),
-    path.resolve(APP_ROOT, '..', 'ai-companion-kit', 'packages', 'companion', 'config.json'),
   ].filter(Boolean);
   for (const candidate of candidates) {
     try { if (fs.existsSync(candidate)) return candidate; } catch { /* ignore */ }

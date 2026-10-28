@@ -20,6 +20,7 @@ export const ALERT_DEFAULTS = Object.freeze({
   backupStale: { threshold: 1, windowMs: 60 * 1000, cooldownMs: 24 * 60 * 60 * 1000 },
   keyLeak: { threshold: 1, windowMs: 60 * 1000, cooldownMs: 6 * 60 * 60 * 1000 },
   indexRot: { threshold: 1, windowMs: 60 * 1000, cooldownMs: 12 * 60 * 60 * 1000 },
+  ritualStale: { threshold: 1, windowMs: 60 * 1000, cooldownMs: 24 * 60 * 60 * 1000 },
 });
 
 /** 日志里的错误文本 → 告警种类（认不出来返回 ''）。 */

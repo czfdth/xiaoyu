@@ -25,6 +25,11 @@ export function openDb(file) {
     );
     CREATE INDEX IF NOT EXISTS idx_journal_key_t ON journal(key, t);
     CREATE INDEX IF NOT EXISTS idx_journal_day ON journal(day);
+    CREATE TABLE IF NOT EXISTS usage_day (
+      day TEXT, key TEXT, model TEXT,
+      steps INTEGER, hit INTEGER, miss INTEGER, out INTEGER,
+      PRIMARY KEY (day, key, model)
+    );
     CREATE TABLE IF NOT EXISTS daily (
       day TEXT PRIMARY KEY, her INTEGER, other INTEGER, tokens INTEGER, cost REAL
     );
@@ -116,4 +121,69 @@ export function stats(db) {
 
 export function closeDb(db) {
   try { db.close(); } catch { /* 已经关了 */ }
+}
+
+/**
+ * 把 token 账本增量聚合进库（按 天/会话/模型）。
+ * 面板每次统计就不用再扫几千行 JSONL 了。
+ * @returns {{rows:number, skipped:boolean}}
+ */
+export function syncTokens(db, file) {
+  let lines = [];
+  try { lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean); } catch { return { rows: 0, skipped: true }; }
+  const marker = 'tokens:' + path.basename(file);
+  const done = Number(metaGet(db, marker)) || 0;
+  if (lines.length <= done) return { rows: 0, skipped: true };
+
+  const upsert = db.prepare(`
+    INSERT INTO usage_day (day, key, model, steps, hit, miss, out)
+    VALUES (?, ?, ?, 1, ?, ?, ?)
+    ON CONFLICT(day, key, model) DO UPDATE SET
+      steps = steps + 1,
+      hit = hit + excluded.hit,
+      miss = miss + excluded.miss,
+      out = out + excluded.out
+  `);
+
+  const dayOf = (at) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at));
+  let rows = 0;
+  db.exec('BEGIN');
+  try {
+    for (const line of lines.slice(done)) {
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      if (row?.k !== 'turn' || !row.b) continue;
+      const at = Number(row.t);
+      if (!Number.isFinite(at)) continue;
+      upsert.run(
+        dayOf(at),
+        String(row.key ?? ''),
+        String(row.model ?? ''),
+        Number(row.b.cacheHit) || 0,
+        Number(row.b.cacheMiss) || 0,
+        Number(row.b.output) || 0,
+      );
+      rows += 1;
+    }
+    metaSet(db, marker, String(lines.length));
+    db.exec('COMMIT');
+  } catch {
+    db.exec('ROLLBACK');
+    return { rows: 0, skipped: false };
+  }
+  return { rows, skipped: false };
+}
+
+/** 按天汇总（panel 用）：步数 / prompt / 输出 / 估算花费。 */
+export function usageByDay(db, { days = 7 } = {}) {
+  return db.prepare(`
+    SELECT day, SUM(steps) AS steps, SUM(hit) AS hit, SUM(miss) AS miss, SUM(out) AS out
+    FROM usage_day GROUP BY day ORDER BY day DESC LIMIT ?
+  `).all(Number(days) || 7).map((r) => ({
+    day: r.day,
+    steps: Number(r.steps) || 0,
+    prompt: (Number(r.hit) || 0) + (Number(r.miss) || 0),
+    output: Number(r.out) || 0,
+    cost: Math.round((((Number(r.hit) || 0) * 0.02 + (Number(r.miss) || 0) * 1 + (Number(r.out) || 0) * 4) / 1e6) * 100) / 100,
+  }));
 }

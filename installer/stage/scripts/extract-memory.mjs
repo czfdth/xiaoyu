@@ -1,7 +1,8 @@
 // 按会话分批提炼，成功批次落盘后才推进游标。
 import fs from 'node:fs';
 import path from 'node:path';
-import { CONFIG_FILE, STATE_DIR, COMPANION_CONFIG } from '../src/paths.js';
+import { CONFIG_FILE, STATE_DIR } from '../src/paths.js';
+import { readCompanion } from '../src/companion.js';
 import { extractDay } from '../src/memory-extraction.js';
 import { readJson } from '../src/state-store.js';
 import { shanghaiDay } from '../src/autonomy.js';
@@ -15,7 +16,7 @@ const log = message => {
 try {
   const cfg = readJson(CONFIG_FILE, {});
   if (!cfg.ownerQQ) throw new Error('尚未设置用户身份，不能推断记忆归属');
-  const companion = readJson(COMPANION_CONFIG, {});
+  const companion = readCompanion();
   if (!companion.apiKey) throw new Error('没有记忆提炼模型的 API key');
   const base = String(companion.baseUrl || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
   // 本地 Ollama：走原生 /api/chat 才能关掉 thinking。qwen3 这类模型的思维链会白烧几分钟，

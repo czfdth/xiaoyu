@@ -31,7 +31,7 @@ if (-not $SkipBuild) {
   if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
 }
 
-$include = @('src', 'scripts', 'bin', 'roles', 'gui\dist', 'presets', 'docs')
+$include = @('src', 'scripts', 'bin', 'roles', 'gui\dist', 'gui\server', 'gui\shared', 'presets', 'docs')
 foreach ($dir in $include) {
   $from = Join-Path $Root $dir
   if (-not (Test-Path $from)) { continue }
@@ -40,7 +40,7 @@ foreach ($dir in $include) {
   Copy-Item $from $to -Recurse -Force
 }
 
-foreach ($file in @('package.json', 'install.ps1', 'README.md', 'LICENSE')) {
+foreach ($file in @('package.json', 'install.ps1', 'README.md', 'LICENSE', 'gui\server.mjs')) {
   $from = Join-Path $Root $file
   if (Test-Path $from) { Copy-Item $from (Join-Path $Stage $file) -Force }
 }

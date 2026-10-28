@@ -63,6 +63,20 @@ await check('打转：同工具同参数第 2 次就拦', async () => {
   return '第 2 次命中并打断，换参数不误伤';
 });
 
+// ── 2b. 步数上限 ──────────────────────────────────────────────────────
+await check('步数上限：跑到第 12 步就截断，不无限打转', async () => {
+  const { createContextBudget, CONTEXT_BUDGET_DEFAULTS } = await import('../src/context-budget.js');
+  const budget = createContextBudget({ limits: CONTEXT_BUDGET_DEFAULTS });
+  let interruptedAt = 0;
+  for (let step = 1; step <= 20; step += 1) {
+    const r = budget.observe({ sessionId: 's-limit', turn: 1, step, promptTokens: 20000 });
+    if (r.interrupt && !interruptedAt) interruptedAt = step;
+  }
+  if (CONTEXT_BUDGET_DEFAULTS.maxStepsPerTurn !== 12) throw new Error('默认上限应该是 12，实际 ' + CONTEXT_BUDGET_DEFAULTS.maxStepsPerTurn);
+  if (!interruptedAt) throw new Error('跑满 20 步都没被截断');
+  return '第 ' + interruptedAt + ' 步触发截断';
+});
+
 // ── 3. 空闲刷新 ────────────────────────────────────────────────────────────
 await check('空闲刷新：20 分钟 + 35k 才换会话', async () => {
   const { createContextBudget, CONTEXT_BUDGET_DEFAULTS } = await import('../src/context-budget.js');

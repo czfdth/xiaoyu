@@ -64,6 +64,8 @@ import { addUsage, loadDaily, saveDaily, shouldBlockAutonomous, normalizeLimits,
 import { driftBody } from './vitals-drift.js';
 import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
 import { catchUpConversation } from './catch-up.js';
+import { openDb, syncJournal, closeDb } from './db.js';
+import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
 import {
   emptyStore, loadStore, saveStore, upsertEntity, upsertFact, factsAbout, factsHint, factsFromSentences,
@@ -3528,6 +3530,62 @@ async function main() {
       log(`事实层：从记忆重建，当前  条事实`);
     } catch { /* 没有长时记忆就先空着 */ }
   }
+  /**
+   * 漏掉了哪些日常（断联、任务没跑成、她自己忘了）。
+   * 只看"存在性"，不改任何东西——补做由她在唤醒后的那一轮里完成。
+   */
+  function missedRituals(now = Date.now()) {
+    const out = [];
+    const day = dayKey(now);
+    const yesterday = dayKey(now - 86400000);
+    try {
+      const diary = path.join(STATE_FILES.diaryDir, day + '.md');
+      if (!fs.existsSync(diary) || fs.statSync(diary).size < 40) out.push('今天的日记还没写');
+    } catch { out.push('今天的日记还没写'); }
+    try {
+      const dreams = fs.readFileSync(STATE_FILES.dreams, 'utf8').split('\n').filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const last = dreams[dreams.length - 1];
+      const lastDay = last?.at ? dayKey(Number(last.at)) : '';
+      if (lastDay !== yesterday && lastDay !== day) out.push('昨晚没做梦（上一个梦是 ' + (lastDay || '更早') + '）');
+    } catch { /* 没有梦文件就先不算 */ }
+    try {
+      const qz = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'qzone-limits.json'), 'utf8').replace(/^\uFEFF/, ''));
+      const posts = Array.isArray(qz?.posts) ? qz.posts : [];
+      const todays = posts.filter((id) => dayKey(Number(id)) === day);
+      if (!todays.length) out.push('今天还没发说说');
+    } catch { /* 没记录就先不算 */ }
+    return out;
+  }
+
+  /** 按唤醒原因给一句具体的事（否则"task"唤醒她只会翻一眼消息就继续睡）。 */
+  function reasonHintLine(reason) {
+    const r = String(reason || '');
+    if (r === 'dream') {
+      return '【今晚的梦】把今天剩下的碎片拼成一个梦写下来（qq_dream），场景可以荒唐、可以突然跳，一两段就够。写完就睡。\n\n';
+    }
+    if (r === 'diary') {
+      return '【日记】今天还没写日记，写一两句真实发生的事（qq_diary_write），不用总结升华。\n\n';
+    }
+    if (r === 'fantasy') {
+      return '【随便想想】想一件没发生的事写下来（qq_fantasy_write）：可以荒唐、可以温柔、可以有点难过，「要是……就好了」那种。一两句就行。\n\n';
+    }
+    if (r === 'introspection') {
+      return '【回头看】想一句你刚才为什么那样说话（qq_introspect），不是汇报，是回头看自己。一句就够。\n\n';
+    }
+    if (r === 'memoir') {
+      return '【回忆录】有值得留下的段落就写一章（qq_memoir_write），按时间顺序、像写给以后的自己。\n\n';
+    }
+    return '';
+  }
+
+  function missedRitualsLine(now = Date.now()) {
+    const items = missedRituals(now);
+    if (!items.length) return '';
+    return '【补做】这些是这几天漏掉的，不用解释、顺手做掉就好（别当任务汇报）：\n'
+      + items.map((t) => '- ' + t).join('\n') + '\n\n';
+  }
+
   function ownerFactsLine() {
     try {
       refreshFactsFromMemory();
@@ -3546,6 +3604,7 @@ async function main() {
     backupStale: '她的备份超过 48 小时没更新。',
     keyLeak: '日志里出现了疑似 API 密钥，建议立刻轮换。',
     indexRot: '语义检索的召回率掉下来了（索引可能过期或换了模型）。',
+    ritualStale: '她的日常断供了（日记/梦超过两天没更新）。',
   };
   /** 告警怎么送到人：用她自己的号私聊主人（不经过智能体）。 */
   async function notifyOwnerAlert(alert) {
@@ -3598,6 +3657,96 @@ async function main() {
       log(`日账：从账本补回今天的 ${sum} token`);
 
       flushDaily();
+      // 夜间日常：幻想 / 自省 各一次（缺了才补，一天最多一次）
+      try {
+        const nowMs = Date.now();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        if (hour >= 23 || hour < 2) {
+          const day = dayKey(nowMs);
+          const state = readOpsState();
+          const done = state.nightRituals && state.nightRituals.day === day ? state.nightRituals : { day, fantasy: false, introspection: false };
+          let changed = done.day !== day;
+          const wakeable = [...socialV2.conversations.keys()].find((k) => k.startsWith('private:')) || [...socialV2.conversations.keys()][0];
+          if (!done.fantasy) {
+            const f = STATE_FILES.fantasies;
+            let lastAt = 0;
+            try {
+              const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+              const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+              lastAt = Number(last?.at) || 0;
+            } catch { /* 没文件 */ }
+            if (!lastAt || dayKey(lastAt) !== day) {
+              done.fantasy = true; changed = true;
+              if (wakeable) scheduleWakeV2(wakeable, 'fantasy');
+              log('夜间日常：幻想没写，已排一次唤醒');
+            } else { done.fantasy = true; changed = true; }
+          }
+          if (!done.introspection) {
+            const f = STATE_FILES.introspection;
+            let lastAt = 0;
+            try {
+              const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+              const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+              lastAt = Number(last?.at ?? last?.t) || 0;
+            } catch { /* 没文件 */ }
+            if (!lastAt || dayKey(lastAt) !== day) {
+              done.introspection = true; changed = true;
+              if (wakeable) scheduleWakeV2(wakeable, 'introspection');
+              log('夜间日常：自省没写，已排一次唤醒');
+            } else { done.introspection = true; changed = true; }
+          }
+          if (changed) writeOpsState({ nightRituals: done });
+        }
+      } catch (error) { log('夜间日常巡检失败：' + (error?.message ?? error)); }
+      // 日常断供检测：日记/梦超过 2 天没有，就挂告警——这类静默失败最难发现（梦停了两天才被发现）
+      try {
+        const nowMs = Date.now();
+        if (!ritualCheckAt || nowMs - ritualCheckAt > 60 * 60 * 1000) {
+          ritualCheckAt = nowMs;
+          const stale = [];
+          const diaryDir = STATE_FILES.diaryDir;
+          let newestDiary = 0;
+          try {
+            for (const name of fs.readdirSync(diaryDir)) {
+              if (!/^\d{4}-\d{2}-\d{2}\.md$/.test(name)) continue;
+              const at = new Date(name.slice(0, 10) + 'T00:00:00+08:00').getTime();
+              if (at > newestDiary) newestDiary = at;
+            }
+          } catch { /* 没日记目录 */ }
+          if (newestDiary && nowMs - newestDiary > 2 * 86400000) stale.push('日记');
+          try {
+            const dreams = fs.readFileSync(STATE_FILES.dreams, 'utf8').split('\n').filter(Boolean);
+            const last = dreams.length ? JSON.parse(dreams[dreams.length - 1]) : null;
+            const lastAt = Number(last?.at) || 0;
+            if (lastAt && nowMs - lastAt > 2 * 86400000) stale.push('梦');
+          } catch { /* 没梦文件 */ }
+          if (stale.length) {
+            alertCenter.report('ritualStale', stale.join('、') + ' 超过两天没有新内容');
+          }
+        }
+      } catch { /* 检测失败不影响巡检 */ }
+      // 日志轮转：每天一次，清 14 天前的日志 / 30 天前的旧备份（cleanup 早写好了，只是没人调用）
+      try {
+        const nowMs = Date.now();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        if (hour >= 5 && (!logRotateAt || nowMs - logRotateAt > 20 * 3600 * 1000)) {
+          logRotateAt = nowMs;
+          const result = cleanup({ home: ROOT, keepBackupDays: 30, keepLogDays: 14, dryRun: false });
+          if (result.removed.length) log('日志轮转：清掉 ' + result.removed.length + ' 个文件（' + result.mb + ' MB）');
+        }
+      } catch (error) { log('日志轮转失败：' + (error?.message ?? error)); }
+      // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
+      try {
+        const now = Date.now();
+        if (!dbSyncAt || now - dbSyncAt > 10 * 60 * 1000) {
+          dbSyncAt = now;
+          const db = openDb(path.join(STATE_DIR, 'life.db'));
+          try {
+            const r = syncJournal(db, STATE_FILES.journalDir);
+            if (r.inserted > 0) log('SQLite 索引：补 ' + r.inserted + ' 条');
+          } finally { closeDb(db); }
+        }
+      } catch (error) { log('SQLite 同步失败：' + (error?.message ?? error)); }
       // 断线补偿：只在"从断开变回连上"的这一拍触发，延迟 5 秒等 WS 稳定
       try {
         const up = snowlumaHealth.connected === true;
@@ -3702,6 +3851,23 @@ async function main() {
    * 告警巡检：网关掉线、备份过期、日账落盘。一分钟一次，每项自带冷却。
    */
   let gatewayDownSince = 0;
+  let autoLaunchGatewayAt = 0;
+  /** 桌面气泡通知：网关断了 QQ 发不出去，只能靠本地提醒。 */
+  function notifyDesktop(title, text) {
+    try {
+      const script = path.join(ROOT, 'scripts', 'notify-desktop.ps1');
+      if (!fs.existsSync(script)) return;
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Title', String(title).slice(0, 40), '-Text', String(text).slice(0, 120)], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+    } catch { /* 通知失败不影响主流程 */ }
+  }
+  let dbSyncAt = 0;
+  let ritualCheckAt = 0;
+  let logRotateAt = 0;
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
@@ -3778,6 +3944,19 @@ async function main() {
           gatewayDownSince = Date.now();
         } else if (Date.now() - gatewayDownSince > 5 * 60 * 1000) {
           alertCenter.report('gatewayDown', 'QQ 网关已离线超过 5 分钟');
+          notifyDesktop('小鱼', 'QQ 网关断开超过 5 分钟，她现在收不到消息。');
+          // 用户已授权自动拉起 SnowLuma（2026-10-28 明确允许）。
+          // 只在"检测到已安装、但没在跑"时启动；登录/扫码仍要人来点。
+          try {
+            const nowMs = Date.now();
+            if (!autoLaunchGatewayAt || nowMs - autoLaunchGatewayAt > 10 * 60 * 1000) {
+              autoLaunchGatewayAt = nowMs;
+              const r = launchGateway({});
+              log('自动拉起网关：' + JSON.stringify(r));
+            }
+          } catch (error) {
+            log('自动拉起网关失败：' + (error?.message ?? error));
+          }
           gatewayDownSince = Date.now(); // 重新计时，别每分钟报一次
         }
       } catch { /* 健康快照拿不到就跳过 */ }
@@ -8488,6 +8667,12 @@ async function main() {
   // 分条发送：与 sendToQQ 共用同一 sendChain，严格顺序；条间随机间隔，
   // 有概率使用长间隔（错落感）；最后一条后不再 sleep。
   function sendBurstToQQ(key, messages, socialCfgOrMin, maybeMax) {
+    // 配置层限制：send.maxBubbles = 1 时，把一次调用里的多条合并成一条。
+    // 起因：模型每次都把两个意思各发一条（"干嘛…" + "我刚在发呆…"），
+    // 用户只想收到一条完整的话。
+    if (Number(cfg.socialV2?.send?.maxBubbles) === 1 && Array.isArray(messages) && messages.length > 1) {
+      messages = [messages.join('\n')];
+    }
     const assertSendAllowed = captureSendGuard(key);
     const [kind, id] = key.split(':');
     let min, max, longProb = 0, longMin = 0, longMax = 0;
@@ -12024,7 +12209,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
@@ -12477,6 +12662,10 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
       const pendingThoughts = Array.isArray(st.pendingThoughts) ? st.pendingThoughts.filter((t) => t && (!t.expiresAt || Date.now() < Number(t.expiresAt))).length : 0;
       if (pendingThoughts > 0) prob = Math.min(1, prob * 1.4);
       if (st.lastAiReplyAt && Date.now() - Number(st.lastAiReplyAt) < 30 * 60 * 1000) prob *= 0.5;
+      // 沉默越久越主动（她不是机器，隔一天没联系会更想说话）
+      const silenceHours = (Date.now() - (Number(st.lastIncomingAt) || Date.now())) / 3600000;
+      const silenceBoost = silenceHours >= 24 ? 2.2 : silenceHours >= 6 ? 1.7 : silenceHours >= 1 ? 1.2 : 0.6;
+      prob = Math.min(0.9, prob * silenceBoost);
       const hour = new Date().getHours();
       if (hour >= 23 || hour < 8) prob *= 0.3;
       const recent = Array.isArray(st.recentMessages) ? st.recentMessages : [];
@@ -12609,6 +12798,16 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
 
   // QQ 消息 → DSH prompt
   async function handleIncoming(kind, id, event, cfg) {
+    // 自己发的消息不能当成"别人来信"：OneBot 上报时 self_id 可能缺失，
+    // 上面那层 user_id === self_id 的比较会失效，她的原话就被记成对方的消息
+    // （10-28 真的出现过：她自己那句被记成 them 入未读，可能导致她回自己）。
+    {
+      const senderUin = String(event?.sender?.user_id ?? event?.user_id ?? '');
+      if (selfUserId && senderUin === String(selfUserId)) {
+        log('忽略自己发的消息（' + key + '，' + senderUin + '）');
+        return;
+      }
+    }
     const key = convKey(kind, id);
     if (!modeAllowed(key, kind, id, cfg, currentMode)) {
       log(`忽略未授权会话 ${key}（当前模式 ${currentMode}，来自 ${event.user_id}）`);
