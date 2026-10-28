@@ -88,8 +88,9 @@ if ($iscc -and -not $NoInstaller) {
   if (-not $NoInstaller) { Write-Warning '没找到 iscc（Inno Setup 6），改为生成便携 zip' }
   $zip = Join-Path $Out "xiaoyu-$version-portable.zip"
   if (Test-Path $zip) { Remove-Item $zip -Force }
-  & 7z a -tzip -mx=7 $zip "$Stage\*" | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'zip 打包失败' }
+  # 用系统自带的 Compress-Archive：不依赖 7z 是否在 PATH 里（之前 CI/新机器上就栽在这）
+  if (Test-Path $zip) { Remove-Item $zip -Force }
+  Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $zip -CompressionLevel Optimal
   Write-Host "便携包已生成：$zip" -ForegroundColor Green
   Write-Host '用户解压后运行 install.ps1 即可安装（同样装到 %LOCALAPPDATA%\xiaoyu）'
 }

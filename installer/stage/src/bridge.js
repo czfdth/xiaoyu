@@ -2673,13 +2673,18 @@ async function main() {
   function watchContextBudget(sessionId, event) {
     try {
       const raw = usageOfEvent(event);
-      if (!raw) return;
-      const b = normalizeUsage(raw);
-      const promptTokens = b.cacheMiss + b.cacheHit + b.cacheWrite;
+      // 即使这一帧没有 usage，也要把 (turn, step) 记进去——步数上限只依赖 step，
+      // 早退会让它形同虚设（实测：上限 12，实际跑到 22 步都没打断）。
+      const b = raw ? normalizeUsage(raw) : null;
+      const promptTokens = b ? b.cacheMiss + b.cacheHit + b.cacheWrite : 0;
       const turn = event?.data?.turn;
       const step = event?.data?.step;
       if (!Number.isFinite(Number(turn)) || !Number.isFinite(Number(step))) return;
       const verdict = contextBudget.observe({ sessionId, turn: Number(turn), step: Number(step), promptTokens });
+      // 诊断：为什么 12 步上限没生效？先无条件把事实记下来，别再靠猜。
+      if (Number(step) > 10) {
+        log(`预算观察：${sessionId} turn=${turn} step=${step} 计数=${verdict.steps} interrupt=${verdict.interrupt} key=${reverse.get(sessionId) ?? '未知'} 上限=${contextBudget.limits.maxStepsPerTurn}`);
+      }
       if (!verdict.interrupt) return;
       // 学习会话（黑话抽取等）没有 QQ 会话映射，打断它只会让内部任务半途而废。
       const key = reverse.get(sessionId);
