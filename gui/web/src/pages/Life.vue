@@ -93,13 +93,22 @@ async function load() {
     loading.value = false;
   }
 }
-onMounted(load);
+onMounted(() => { load(); loadDayFeed(); });
 
 const stage = computed(() => data.value?.stage);
 const stats = computed(() => data.value?.stats ?? {});
 const works = computed(() => data.value?.works ?? { projects: [], images: 0, audio: 0, notes: 0, memoir: 0 });
 const future = computed(() => data.value?.future ?? { age: { text: '' }, birthday: {}, items: [], next: null });
 const schedule = computed(() => data.value?.schedule ?? { items: [], now: '', next: '' });
+
+// 按天视图：同一天里发生过什么（日记/梦/说说/画/聊天合并）
+const dayFeed = ref([]);
+async function loadDayFeed() {
+  try {
+    const r = await get('/life/timeline?days=7');
+    dayFeed.value = r?.days ?? [];
+  } catch { /* 拿不到就不显示这一块 */ }
+}
 
 const timeline = computed(() => {
   const d = data.value;
@@ -250,6 +259,17 @@ function openChronicle(name) {
       <div v-for="c in chronicles" :key="c.name" class="row" style="gap: 10px; padding: 4px 0">
         <button class="btn sm ghost" @click="openChronicle(c.name)">{{ c.name }}</button>
         <span class="muted small">{{ Math.round(c.size / 1024) }} KB</span>
+      </div>
+    </Card>
+
+    <Card title="按天看" :dim="dayFeed.length ? `最近 ${dayFeed.length} 天` : '读取中…'">
+      <div v-if="!dayFeed.length" class="muted small">还没有记录。</div>
+      <div v-for="day in dayFeed" :key="day.day" class="stack" style="gap: 6px; margin-bottom: 14px">
+        <div class="mono muted small">{{ day.day }}</div>
+        <div v-for="(item, i) in day.items" :key="i" class="row" style="gap: 8px; align-items: baseline">
+          <span class="badge">{{ item.kind }}</span>
+          <span class="small">{{ item.text }}</span>
+        </div>
       </div>
     </Card>
 
