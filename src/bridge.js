@@ -2698,6 +2698,10 @@ async function main() {
       appendActivity(`${key} [context-budget] 单回合 ${verdict.steps} 步超限，已打断`);
       void withTimeout(api.stopSessionWork(sessionId), DSH_CONTROL_TIMEOUT_MS, 'stopSessionWork')
         .catch((error) => log(`⚠️ 上下文预算打断失败 ${key}：${error?.message ?? error}`));
+      // 打断之后必须把「回合进行中」的标记清掉，否则租约（15 分钟）内这个会话都算忙，
+      // 后续消息全部被判定为「会话繁忙」而排队——今天 18:05 就这么卡了 4 条。
+      v2TurnStartAt.delete(sessionId);
+      pendingWakeKeys.delete(key);
     } catch (error) {
       log('上下文预算：采样失败', error?.message ?? error);
     }
