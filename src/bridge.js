@@ -3754,6 +3754,23 @@ async function main() {
           }
         }
       } catch { /* 检测失败不影响巡检 */ }
+      // 每日小结：早上 8~10 点给她主人发一条昨天的概况（一天一次）
+      try {
+        const nowMs = Date.now();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        const day = dayKey(nowMs);
+        if (hour >= 8 && hour < 10 && dailyReportDay !== day && cfg.ownerQQ) {
+          dailyReportDay = day;
+          const report = buildDailyReport();
+          const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
+          if (text) {
+            // sendToQQ 自带发送队列，同步函数里不 await（否则语法错——这个坑今天第三次踩）
+            void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200));
+            log('日报已发（' + day + '）');
+            appendActivity('[daily-report] 已发每日小结');
+          }
+        }
+      } catch (error) { log('日报推送失败：' + (error?.message ?? error)); }
       // 日志轮转：每天一次，清 14 天前的日志 / 30 天前的旧备份（cleanup 早写好了，只是没人调用）
       try {
         const nowMs = Date.now();
@@ -3897,6 +3914,7 @@ async function main() {
   let dbSyncAt = 0;
   let ritualCheckAt = 0;
   let logRotateAt = 0;
+  let dailyReportDay = '';
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
   let lastSeenConnected = null;
