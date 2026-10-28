@@ -18,7 +18,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { COMPANION_CONFIG } from '../src/paths.js';
+import { APP_ROOT } from '../src/paths.js';
+const COMPANION_FILE = process.env.XIAOYU_COMPANION_CONFIG
+  ? path.resolve(process.env.XIAOYU_COMPANION_CONFIG)
+  : path.join(APP_ROOT, 'companion.json');
+import { dpapiEncrypt, dpapiDecrypt } from '../src/companion.js';
 
 const args = process.argv.slice(2);
 const cmd = args[0] || 'status';
@@ -26,53 +30,8 @@ const fileArg = (() => {
   const i = args.indexOf('--file');
   return i >= 0 ? args[i + 1] : '';
 })();
-const target = fileArg ? path.resolve(fileArg) : COMPANION_CONFIG;
+const target = fileArg ? path.resolve(fileArg) : COMPANION_FILE;
 const encFile = `${target}.dpapi`;
-
-function psRun(commands) {
-  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', commands.join('; ')], {
-    encoding: 'utf8',
-    timeout: 60000,
-  });
-}
-
-// 用 .NET 的 ProtectedData（DPAPI）而不是 ConvertTo-SecureString：
-// 后者对文本格式挑剔（实测报 "Input string was not in a correct format"），
-// ProtectedData 直接吃字节、吐 base64，不经过任何文本编码转换。
-function dpapiProtect(plain) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xy-dp-'));
-  const inFile = path.join(dir, 'in.bin');
-  const outFile = path.join(dir, 'out.txt');
-  try {
-    fs.writeFileSync(inFile, Buffer.from(plain, 'utf8'));
-    psRun([
-      'Add-Type -AssemblyName System.Security',
-      `$b = [IO.File]::ReadAllBytes('${inFile}')`,
-      `$p = [Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser')`,
-      `[IO.File]::WriteAllText('${outFile}', [Convert]::ToBase64String($p), [Text.Encoding]::ASCII)`,
-    ]);
-    return fs.readFileSync(outFile, 'utf8').trim();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-}
-
-function dpapiUnprotect(blob) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xy-dp-'));
-  const inFile = path.join(dir, 'in.txt');
-  const outFile = path.join(dir, 'out.bin');
-  try {
-    fs.writeFileSync(inFile, String(blob).trim(), 'ascii');
-    psRun([
-      'Add-Type -AssemblyName System.Security',
-      `$s = [IO.File]::ReadAllText('${inFile}', [Text.Encoding]::ASCII)`,
-      `$p = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($s), $null, 'CurrentUser')`,
-      `[IO.File]::WriteAllBytes('${outFile}', $p)`,
-    ]);
-    return fs.readFileSync(outFile, 'utf8');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-}
-
-function dpapiEncrypt(plain) { return dpapiProtect(plain); }
-function dpapiDecrypt(blob) { return dpapiUnprotect(blob); }
 
 function status() {
   const plain = fs.existsSync(target);

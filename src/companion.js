@@ -9,7 +9,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { COMPANION_CONFIG } from './paths.js';
+import { APP_ROOT } from './paths.js';
+
+/** 显式路径：不依赖 paths.js 的存在性回退（否则删/改名会让它漂到别的目录）。 */
+const COMPANION_FILE = process.env.XIAOYU_COMPANION_CONFIG
+  ? path.resolve(process.env.XIAOYU_COMPANION_CONFIG)
+  : path.join(APP_ROOT, 'companion.json');
 
 const cache = { at: 0, mtime: 0, value: null };
 
@@ -65,7 +70,7 @@ export function dpapiEncrypt(plain) {
  * @param {{file?:string, force?:boolean}} [options]
  * @returns {object} 解析失败/文件不存在都返回 {}
  */
-export function readCompanion({ file = COMPANION_CONFIG, force = false } = {}) {
+export function readCompanion({ file = COMPANION_FILE, force = false } = {}) {
   const encFile = `${file}.dpapi`;
   let mtime = 0;
   try { mtime = Math.max(fs.statSync(file).mtimeMs, fs.existsSync(encFile) ? fs.statSync(encFile).mtimeMs : 0); } catch { /* 忽略 */ }
@@ -86,7 +91,7 @@ export function readCompanion({ file = COMPANION_CONFIG, force = false } = {}) {
 }
 
 /** 当前是"加密生效"还是"还是明文"——给体检/面板显示用。 */
-export function companionKeyState({ file = COMPANION_CONFIG } = {}) {
+export function companionKeyState({ file = COMPANION_FILE } = {}) {
   const encExists = fs.existsSync(`${file}.dpapi`);
   const plainExists = fs.existsSync(file);
   const cfg = readCompanion({ file });
