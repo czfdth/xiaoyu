@@ -498,6 +498,69 @@ function toolDisabledNow(name) {
 //
 // 为什么默认关闭：它花的是**另一个**账号/订阅的额度，而且对方是编码 agent —— 能读文件、能跑命令。
 // 群里任何人只要能影响她，就能借它去动本机的东西，所以这里只认管理员私聊，并且要显式打开
+// ── 用户自定义工具 ────────────────────────────────────────────────────────
+// 扫描 tools/*.mjs，每个文件 export { name, description, schema, run }。
+// 约定写在 tools/example-calc.mjs 里，用户照抄即可。
+//
+// 边界：
+//   · 默认关闭（cfg.socialV2.tools.custom 必须是 true），因为工具跑在本进程里
+//   · 单个文件加载失败只跳过它，不影响其它工具和桥接
+//   · 工具名重复会被拒绝（防止覆盖内置的 qq_send_message 之类）
+async function loadCustomTools() {
+  const dir = ROOT + '/tools';
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((n) => n.endsWith('.mjs')); } catch { return; }
+  if (!files.length) return;
+
+  const builtin = new Set();
+  try {
+    for (const name of Object.keys(server[name] ? {} : {})) builtin.add(name);
+  } catch { /* 忽略 */ }
+
+  for (const file of files) {
+    const full = dir + '/' + file;
+    try {
+      const mod = await import(new URL('file://' + full.replace(/\\/g, '/')).href);
+      const name = String(mod.name ?? '').trim();
+      const description = String(mod.description ?? '').trim();
+      const schema = mod.schema ?? {};
+      const run = mod.run;
+      if (!name || !/^[a-z][a-z0-9_]{2,40}$/.test(name)) {
+        console.warn('[custom-tool] 跳过 ' + file + '：name 不合法');
+        continue;
+      }
+      if (typeof run !== 'function') {
+        console.warn('[custom-tool] 跳过 ' + file + '：没有导出 run()');
+        continue;
+      }
+      if (registeredToolNames.has(name)) {
+        console.warn('[custom-tool] 跳过 ' + file + '：工具名 ' + name + ' 已存在');
+        continue;
+      }
+      server.tool(name, description || '自定义工具', schema, async (args) => {
+        try {
+          const out = await run(args ?? {});
+          if (out && typeof out === 'object' && out.error) {
+            return { content: [{ type: 'text', text: String(out.error) }], isError: true };
+          }
+          const text = typeof out === 'string' ? out : String(out?.text ?? JSON.stringify(out));
+          return { content: [{ type: 'text', text: text.slice(0, 4000) }] };
+        } catch (error) {
+          return { content: [{ type: 'text', text: '工具执行失败：' + (error?.message ?? error) }], isError: true };
+        }
+      });
+      registeredToolNames.add(name);
+      console.log('[custom-tool] 已加载 ' + name + '（' + file + '）');
+    } catch (error) {
+      console.warn('[custom-tool] 加载 ' + file + ' 失败：' + (error?.message ?? error));
+    }
+  }
+}
+
+if (cfg.socialV2?.tools?.custom === true) {
+  try { await loadCustomTools(); } catch (error) { console.warn('[custom-tool] 初始化失败：' + (error?.message ?? error)); }
+}
+
 // ── 读文档 ────────────────────────────────────────────────────────────────
 // 她"看不懂 Word/PDF"不是模型的问题，是文字从没进过上下文。
 // 这里把抽取做成工具：给路径，回文字（限 6000 字，避免一口气撑爆上下文）。
