@@ -3557,6 +3557,21 @@ async function main() {
     return out;
   }
 
+  /** 按唤醒原因给一句具体的事（否则"task"唤醒她只会翻一眼消息就继续睡）。 */
+  function reasonHintLine(reason) {
+    const r = String(reason || '');
+    if (r === 'dream') {
+      return '【今晚的梦】把今天剩下的碎片拼成一个梦写下来（qq_dream），场景可以荒唐、可以突然跳，一两段就够。写完就睡。\n\n';
+    }
+    if (r === 'diary') {
+      return '【日记】今天还没写日记，写一两句真实发生的事（qq_diary_write），不用总结升华。\n\n';
+    }
+    if (r === 'memoir') {
+      return '【回忆录】有值得留下的段落就写一章（qq_memoir_write），按时间顺序、像写给以后的自己。\n\n';
+    }
+    return '';
+  }
+
   function missedRitualsLine(now = Date.now()) {
     const items = missedRituals(now);
     if (!items.length) return '';
@@ -12079,7 +12094,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;

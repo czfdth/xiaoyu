@@ -32,7 +32,7 @@ const r = await fetch('http://127.0.0.1:3100/api/socialV2/wake', {
   headers: { 'x-console-token': tok, 'content-type': 'application/json' },
   body: JSON.stringify({
     key: `private:${OWNER}`,
-    reason: 'task',
+    reason: 'dream', // 用具体原因，唤醒提示里才会带「今晚做梦」的引导
     hint: '现在是凌晨四点，你正在睡着。做了一个梦，用 qq_dream 记下来（一两百字，不合逻辑也行，带一句 feel），记完继续睡，别给他发消息。'
   })
 });
