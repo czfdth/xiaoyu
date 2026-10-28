@@ -32,6 +32,7 @@ import { opsView, runOps, runCleanup } from './ops.mjs';
 import { worksWall, buildMonthlyReport, listReports } from './works-report.mjs';
 import { kgView } from './kg.mjs';
 import { herLiveView } from './live.mjs';
+import { lifeTimeline } from './timeline.mjs';
 import { searchAll } from './search.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
@@ -159,6 +160,8 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   app.get('/api/her', async () => herState());
   // 她此刻：实时读 journal/state（前端 10 秒轮询）
   app.get('/api/her/live', async () => herLiveView());
+  // 生活时间流：日记 / 梦 / 说说 / 画 / 聊天条数，按天合并
+  app.get('/api/life/timeline', async (req) => lifeTimeline({ days: Number(req.query?.days) || 7 }));
   // 全局搜索：聊天记录 / 事实 / 日记 / 知识库
   app.get('/api/search', async (req) => searchAll(String(req.query?.q ?? ''), { limit: Number(req.query?.limit) || 20 }));
   // 她的状态可视化：当前值 + 24 小时身体/心情序列 + 当天聊天分桶
