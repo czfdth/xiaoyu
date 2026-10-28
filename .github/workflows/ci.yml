@@ -40,3 +40,44 @@ jobs:
           node --check src/mcp-snowluma-safe.js
           node --check gui/server/app.mjs
 
+  integration:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    # 只在推 main 或手动时跑：它要真起桥接进程，比单测慢一个数量级
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            gui/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix gui ci
+
+      - name: Patch SnowLuma ESM imports
+        run: node scripts/patch-snowluma-sdk.mjs
+
+      - name: 真桥接集成测试
+        env:
+          # 打开集成开关：这些用例会 spawn 一个真的 bridge 进程，用假 QQ 端点
+          XIAOYU_IT: '1'
+          XIAOYU_SKIP_BRIDGE_IT: '0'
+        run: |
+          node --test --test-timeout=180000 tests/agency-integration.test.mjs tests/situation-integration.test.mjs
+
+      - name: 失败时留存日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: |
+            state/*.log
+            logs/*.log
+          if-no-files-found: ignore
