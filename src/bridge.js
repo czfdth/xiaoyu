@@ -66,6 +66,7 @@ import { addPending, takePending, peekPending, pendingHint } from './pending-ans
 import { catchUpConversation } from './catch-up.js';
 import { wanderLine } from './wander.js';
 import { rhythmFactor, rhythmNote } from './rhythm.js';
+import { weeklyReviewLine } from './review.js';
 import { openDb, syncJournal, closeDb } from './db.js';
 import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
@@ -12258,7 +12259,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + reasonHintLine(reason) + rhythmNote() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
