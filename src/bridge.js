@@ -3529,6 +3529,41 @@ async function main() {
       log(`事实层：从记忆重建，当前  条事实`);
     } catch { /* 没有长时记忆就先空着 */ }
   }
+  /**
+   * 漏掉了哪些日常（断联、任务没跑成、她自己忘了）。
+   * 只看"存在性"，不改任何东西——补做由她在唤醒后的那一轮里完成。
+   */
+  function missedRituals(now = Date.now()) {
+    const out = [];
+    const day = dayKey(now);
+    const yesterday = dayKey(now - 86400000);
+    try {
+      const diary = path.join(STATE_FILES.diaryDir, day + '.md');
+      if (!fs.existsSync(diary) || fs.statSync(diary).size < 40) out.push('今天的日记还没写');
+    } catch { out.push('今天的日记还没写'); }
+    try {
+      const dreams = fs.readFileSync(STATE_FILES.dreams, 'utf8').split('\n').filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const last = dreams[dreams.length - 1];
+      const lastDay = last?.at ? dayKey(Number(last.at)) : '';
+      if (lastDay !== yesterday && lastDay !== day) out.push('昨晚没做梦（上一个梦是 ' + (lastDay || '更早') + '）');
+    } catch { /* 没有梦文件就先不算 */ }
+    try {
+      const qz = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'qzone-limits.json'), 'utf8').replace(/^\uFEFF/, ''));
+      const posts = Array.isArray(qz?.posts) ? qz.posts : [];
+      const todays = posts.filter((id) => dayKey(Number(id)) === day);
+      if (!todays.length) out.push('今天还没发说说');
+    } catch { /* 没记录就先不算 */ }
+    return out;
+  }
+
+  function missedRitualsLine(now = Date.now()) {
+    const items = missedRituals(now);
+    if (!items.length) return '';
+    return '【补做】这些是这几天漏掉的，不用解释、顺手做掉就好（别当任务汇报）：\n'
+      + items.map((t) => '- ' + t).join('\n') + '\n\n';
+  }
+
   function ownerFactsLine() {
     try {
       refreshFactsFromMemory();
@@ -12044,7 +12079,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
