@@ -3566,6 +3566,12 @@ async function main() {
     if (r === 'diary') {
       return '【日记】今天还没写日记，写一两句真实发生的事（qq_diary_write），不用总结升华。\n\n';
     }
+    if (r === 'fantasy') {
+      return '【随便想想】想一件没发生的事写下来（qq_fantasy_write）：可以荒唐、可以温柔、可以有点难过，「要是……就好了」那种。一两句就行。\n\n';
+    }
+    if (r === 'introspection') {
+      return '【回头看】想一句你刚才为什么那样说话（qq_introspect），不是汇报，是回头看自己。一句就够。\n\n';
+    }
     if (r === 'memoir') {
       return '【回忆录】有值得留下的段落就写一章（qq_memoir_write），按时间顺序、像写给以后的自己。\n\n';
     }
@@ -3649,6 +3655,47 @@ async function main() {
       log(`日账：从账本补回今天的 ${sum} token`);
 
       flushDaily();
+      // 夜间日常：幻想 / 自省 各一次（缺了才补，一天最多一次）
+      try {
+        const nowMs = Date.now();
+        const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
+        if (hour >= 23 || hour < 2) {
+          const day = dayKey(nowMs);
+          const state = readOpsState();
+          const done = state.nightRituals && state.nightRituals.day === day ? state.nightRituals : { day, fantasy: false, introspection: false };
+          let changed = done.day !== day;
+          const wakeable = [...socialV2.conversations.keys()].find((k) => k.startsWith('private:')) || [...socialV2.conversations.keys()][0];
+          if (!done.fantasy) {
+            const f = STATE_FILES.fantasies;
+            let lastAt = 0;
+            try {
+              const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+              const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+              lastAt = Number(last?.at) || 0;
+            } catch { /* 没文件 */ }
+            if (!lastAt || dayKey(lastAt) !== day) {
+              done.fantasy = true; changed = true;
+              if (wakeable) scheduleWakeV2(wakeable, 'fantasy');
+              log('夜间日常：幻想没写，已排一次唤醒');
+            } else { done.fantasy = true; changed = true; }
+          }
+          if (!done.introspection) {
+            const f = STATE_FILES.introspection;
+            let lastAt = 0;
+            try {
+              const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+              const last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+              lastAt = Number(last?.at ?? last?.t) || 0;
+            } catch { /* 没文件 */ }
+            if (!lastAt || dayKey(lastAt) !== day) {
+              done.introspection = true; changed = true;
+              if (wakeable) scheduleWakeV2(wakeable, 'introspection');
+              log('夜间日常：自省没写，已排一次唤醒');
+            } else { done.introspection = true; changed = true; }
+          }
+          if (changed) writeOpsState({ nightRituals: done });
+        }
+      } catch (error) { log('夜间日常巡检失败：' + (error?.message ?? error)); }
       // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
       try {
         const now = Date.now();
