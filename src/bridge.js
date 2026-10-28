@@ -12627,6 +12627,16 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
 
   // QQ 消息 → DSH prompt
   async function handleIncoming(kind, id, event, cfg) {
+    // 自己发的消息不能当成"别人来信"：OneBot 上报时 self_id 可能缺失，
+    // 上面那层 user_id === self_id 的比较会失效，她的原话就被记成对方的消息
+    // （10-28 真的出现过：她自己那句被记成 them 入未读，可能导致她回自己）。
+    {
+      const senderUin = String(event?.sender?.user_id ?? event?.user_id ?? '');
+      if (selfUserId && senderUin === String(selfUserId)) {
+        log('忽略自己发的消息（' + key + '，' + senderUin + '）');
+        return;
+      }
+    }
     const key = convKey(kind, id);
     if (!modeAllowed(key, kind, id, cfg, currentMode)) {
       log(`忽略未授权会话 ${key}（当前模式 ${currentMode}，来自 ${event.user_id}）`);
