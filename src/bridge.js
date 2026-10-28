@@ -65,6 +65,7 @@ import { driftBody } from './vitals-drift.js';
 import { addPending, takePending, peekPending, pendingHint } from './pending-answers.js';
 import { catchUpConversation } from './catch-up.js';
 import { openDb, syncJournal, closeDb } from './db.js';
+import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
 import {
   emptyStore, loadStore, saveStore, upsertEntity, upsertFact, factsAbout, factsHint, factsFromSentences,
@@ -3812,6 +3813,7 @@ async function main() {
    * 告警巡检：网关掉线、备份过期、日账落盘。一分钟一次，每项自带冷却。
    */
   let gatewayDownSince = 0;
+  let autoLaunchGatewayAt = 0;
   /** 桌面气泡通知：网关断了 QQ 发不出去，只能靠本地提醒。 */
   function notifyDesktop(title, text) {
     try {
@@ -3903,6 +3905,18 @@ async function main() {
         } else if (Date.now() - gatewayDownSince > 5 * 60 * 1000) {
           alertCenter.report('gatewayDown', 'QQ 网关已离线超过 5 分钟');
           notifyDesktop('小鱼', 'QQ 网关断开超过 5 分钟，她现在收不到消息。');
+          // 用户已授权自动拉起 SnowLuma（2026-10-28 明确允许）。
+          // 只在"检测到已安装、但没在跑"时启动；登录/扫码仍要人来点。
+          try {
+            const nowMs = Date.now();
+            if (!autoLaunchGatewayAt || nowMs - autoLaunchGatewayAt > 10 * 60 * 1000) {
+              autoLaunchGatewayAt = nowMs;
+              const r = launchGateway({});
+              log('自动拉起网关：' + JSON.stringify(r));
+            }
+          } catch (error) {
+            log('自动拉起网关失败：' + (error?.message ?? error));
+          }
           gatewayDownSince = Date.now(); // 重新计时，别每分钟报一次
         }
       } catch { /* 健康快照拿不到就跳过 */ }
