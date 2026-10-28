@@ -3812,6 +3812,19 @@ async function main() {
    * 告警巡检：网关掉线、备份过期、日账落盘。一分钟一次，每项自带冷却。
    */
   let gatewayDownSince = 0;
+  /** 桌面气泡通知：网关断了 QQ 发不出去，只能靠本地提醒。 */
+  function notifyDesktop(title, text) {
+    try {
+      const script = path.join(ROOT, 'scripts', 'notify-desktop.ps1');
+      if (!fs.existsSync(script)) return;
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Title', String(title).slice(0, 40), '-Text', String(text).slice(0, 120)], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+    } catch { /* 通知失败不影响主流程 */ }
+  }
   let dbSyncAt = 0;
   // 断线补偿：网关从"断开"变回"连上"时补一次。全部定义在 startAlertWatch 里，
   // 和调用点同一个作用域——上次把它挂在 onBotStatus 里、函数却定义在别处，连上 8 秒就崩。
@@ -3889,6 +3902,7 @@ async function main() {
           gatewayDownSince = Date.now();
         } else if (Date.now() - gatewayDownSince > 5 * 60 * 1000) {
           alertCenter.report('gatewayDown', 'QQ 网关已离线超过 5 分钟');
+          notifyDesktop('小鱼', 'QQ 网关断开超过 5 分钟，她现在收不到消息。');
           gatewayDownSince = Date.now(); // 重新计时，别每分钟报一次
         }
       } catch { /* 健康快照拿不到就跳过 */ }
