@@ -3584,6 +3584,30 @@ async function main() {
     return '';
   }
 
+  /**
+   * 她答应过的提醒：未到点的、还没发的，列出来塞进提示词。
+   * 起因：设完就忘——你问她"上次让我提醒什么来着"，她答不上来（数据其实一直在 reminders.json 里）。
+   */
+  function remindersLine(now = Date.now()) {
+    let items = [];
+    try {
+      const store = JSON.parse(fs.readFileSync(STATE_FILES.reminders, 'utf8').replace(/^\uFEFF/, ''));
+      items = Array.isArray(store?.items) ? store.items : [];
+    } catch { return ''; }
+    const pending = items
+      .filter((r) => r && !r.sentAt && Number(r.dueAt) > 0)
+      .sort((a, b) => Number(a.dueAt) - Number(b.dueAt))
+      .slice(0, 5);
+    if (!pending.length) return '';
+    const fmt = (at) => {
+      const d = new Date(Number(at));
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(d);
+      const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+      return day === dayKey(now) ? '今天 ' + hhmm : day + ' ' + hhmm;
+    };
+    return '【你答应过的提醒】\n' + pending.map((r) => '- ' + fmt(r.dueAt) + '：' + String(r.text ?? '').slice(0, 60)).join('\n') + '\n\n';
+  }
+
   function missedRitualsLine(now = Date.now()) {
     const items = missedRituals(now);
     if (!items.length) return '';
@@ -12214,7 +12238,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + reasonHintLine(reason) + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
