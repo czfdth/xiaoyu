@@ -12318,7 +12318,18 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + reasonHintLine(reason) + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+  // 「要睡了」这类道别是她说心里话的时刻：这时候提示她可以留张便签，
+  // 比每天定点催她写要自然得多（她现有 6 张便签里有一半和道别/早上有关）。
+  let noteHintAt = 0;
+  const FAREWELL = /(晚安|睡了|睡了|睡觉|先睡|我睡了|下线|明天见|拜拜|再见|出门|走了)/;
+
+  function noteFarewellHint(now = Date.now()) {
+    if (!noteHintAt || now - noteHintAt > 10 * 60 * 1000) return "";
+    noteHintAt = 0;   // 只用一次
+    return "【便签】他刚跟你道别。如果有想留下的话，可以写一张便签放他桌面（qq_pc_save_note）；不想写就当没这句。\n\n";
+  }
+
+    const base = pendingLine + reasonHintLine(reason) + noteFarewellHint() + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
@@ -12907,6 +12918,11 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
 
   // QQ 消息 → DSH prompt
   async function handleIncoming(kind, id, event, cfg) {
+    // 道别关键词命中就打个标记，下一轮提示词里带一句「可以留张便签」
+    try {
+      const rawText = String(event?.raw_message ?? event?.message ?? "");
+      if (kind === "private" && FAREWELL.test(rawText)) noteHintAt = Date.now();
+    } catch { /* 文本拿不到就跳过 */ }
     // 自己发的消息不能当成"别人来信"：OneBot 上报时 self_id 可能缺失，
     // 上面那层 user_id === self_id 的比较会失效，她的原话就被记成对方的消息
     // （10-28 真的出现过：她自己那句被记成 them 入未读，可能导致她回自己）。
