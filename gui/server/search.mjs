@@ -12,6 +12,12 @@ function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { return fallback; }
 }
 
+/** LIKE 里的 % 和 _ 是通配符：不转义的话，搜 "%" 会返回全部记录（安全审查 P1-09）。 */
+function escapeLike(input) {
+  // 用 '!' 当转义符：反斜杠要同时穿过 JS 字符串和 SQL 字面量，太难写对。
+  return String(input ?? '').replace(/[!%_]/g, (ch) => '!' + ch);
+}
+
 function snippet(text, q, radius = 40) {
   const s = String(text ?? '');
   const at = s.toLowerCase().indexOf(q.toLowerCase());
@@ -29,8 +35,8 @@ function searchJournal(q, limit) {
     db = openDb(dbFile);
     const rows = db.prepare(`
       SELECT day, t, role, text FROM journal
-      WHERE text LIKE ? ORDER BY t DESC LIMIT ?
-    `).all(`%${q}%`, limit);
+      WHERE text LIKE ? ESCAPE '!' ORDER BY t DESC LIMIT ?
+    `).all(`%${escapeLike(q)}%`, limit);
     return rows.map((r) => ({
       kind: 'journal',
       at: Number(r.t) || 0,
