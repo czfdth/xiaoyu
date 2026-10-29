@@ -8755,6 +8755,21 @@ async function main() {
       messages = [messages.join('\n')];
     }
     const assertSendAllowed = captureSendGuard(key);
+    // 智能合并：她习惯一次给两句（一句反应 + 一句解释）。两句都短时拆开像复读机，
+    // 合计不超过 24 字就合成一条；长一点才分开，保持节奏而不是机械地发两条。
+    {
+      const maxBubbles = Number(cfg.socialV2?.send?.maxBubbles);
+      if (Number.isFinite(maxBubbles) && maxBubbles >= 2 && Array.isArray(messages) && messages.length >= 2) {
+        const joinedAll = messages.join('');
+        if (joinedAll.length <= 24) {
+          messages = [messages.join('，')];
+        } else if (messages.length > maxBubbles) {
+          const head = messages.slice(0, maxBubbles - 1);
+          const tail = messages.slice(maxBubbles - 1).join('\n');
+          messages = [...head, tail];
+        }
+      }
+    }
     const [kind, id] = key.split(':');
     let min, max, longProb = 0, longMin = 0, longMax = 0;
     if (typeof socialCfgOrMin === 'object' && socialCfgOrMin !== null) {
