@@ -2720,7 +2720,7 @@ async function main() {
       if (!verdict.interrupt) return;
       // 正在发消息时不打断：发到一半被掐断，QQ 侧会留一个「⏹️ 已停止」的空壳。下一拍再判。
       // 只看当前会话：全局判断会让一个群的长发送拖住别的群的预算中断。
-      if (pendingSendToolCalls.get(sessionId) > 0) return;
+      if ((pendingSendToolCalls.get(sessionId)?.size ?? 0) > 0) return;
       // 学习会话（黑话抽取等）没有 QQ 会话映射，打断它只会让内部任务半途而废。
       const key = reverse.get(sessionId);
       if (!key) return;
@@ -3829,12 +3829,13 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
         const day = dayKey(nowMs);
         if (hour >= 8 && hour < 23 && dailyReportDay !== day && dailyReportSentDay() !== day && cfg.ownerQQ) {
           dailyReportDay = day;
-          markDailyReportSent(day);
+
           const report = buildDailyReport();
           const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
           if (text) {
             // sendToQQ 自带发送队列，同步函数里不 await（否则语法错——这个坑今天第三次踩）
             void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200));
+            markDailyReportSent(day);   // 发送队列已接收才标记，失败不落盘
             log('日报已发（' + day + '）');
             appendActivity('[daily-report] 已发每日小结');
           }
