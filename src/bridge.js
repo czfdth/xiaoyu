@@ -2692,6 +2692,8 @@ async function main() {
         log(`预算观察：${sessionId} turn=${turn} step=${step} 计数=${verdict.steps} interrupt=${verdict.interrupt} key=${reverse.get(sessionId) ?? '未知'} 上限=${contextBudget.limits.maxStepsPerTurn}`);
       }
       if (!verdict.interrupt) return;
+      // 正在发消息时不打断：发到一半被掐断，QQ 侧会留一个「⏹️ 已停止」的空壳。下一拍再判。
+      if (pendingSendToolCalls.size > 0) return;
       // 学习会话（黑话抽取等）没有 QQ 会话映射，打断它只会让内部任务半途而废。
       const key = reverse.get(sessionId);
       if (!key) return;
