@@ -87,12 +87,13 @@ function markDailyReportSent(day) {
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); fs.writeFileSync(DAILY_REPORT_MARKER, day, "utf8"); } catch { /* 记不下来也不阻塞发送 */ }
 }
 
-let noteHintAt = 0;
+const noteHintByKey = new Map();   // conversationKey -> 道别时间戳
 const FAREWELL = /(晚安|睡了|睡觉|先睡|我睡了|下线|明天见|拜拜|再见|出门|走了)/;
 
-function noteFarewellHint(now = Date.now()) {
-  if (!noteHintAt || now - noteHintAt > 10 * 60 * 1000) return "";
-  noteHintAt = 0;
+function noteFarewellHint(key, now = Date.now()) {
+  const at = Number(noteHintByKey.get(key)) || 0;
+  if (!at || now - at > 10 * 60 * 1000) return "";
+  noteHintByKey.delete(key);   // 只用一次，而且只给这个会话
   return "【便签】他刚跟你道别。如果有想留下的话，可以写一张便签放他桌面（qq_pc_save_note）；不想写就当没这句。\n\n";
 }
 
@@ -12368,7 +12369,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
 
-    const base = pendingLine + reasonHintLine(reason) + noteFarewellHint() + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + noteFarewellHint(key) + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
@@ -12961,7 +12962,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 道别关键词命中就打个标记，下一轮提示词里带一句「可以留张便签」
     try {
       const rawText = String(event?.raw_message ?? event?.message ?? "");
-      if (kind === "private" && FAREWELL.test(rawText)) noteHintAt = Date.now();
+      if (kind === "private" && FAREWELL.test(rawText)) noteHintByKey.set(key, Date.now());
     } catch { /* 文本拿不到就跳过 */ }
     // 自己发的消息不能当成"别人来信"：OneBot 上报时 self_id 可能缺失，
     // 上面那层 user_id === self_id 的比较会失效，她的原话就被记成对方的消息
