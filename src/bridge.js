@@ -70,6 +70,7 @@ import { weeklyReviewLine } from './review.js';
 import { failureLine } from './failures.js';
 import { activate } from './activation.js';
 import { recordInterrupted, interruptedLine } from './interrupted.js';
+import { ambientLine, refreshWeather } from './ambient.js';
 import { openDb, syncJournal, closeDb } from './db.js';
 import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
@@ -3694,6 +3695,7 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
    * 从 token 账本把"今天的"补回来，日预算才是真实用量（只读最后 5000 行）。
    */
   let lastSeedAt = 0;
+  let ambientAt = 0;
 
   function seedDailyFromLedger() {
     try {
@@ -3813,6 +3815,11 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
           if (result.removed.length) log('日志轮转：清掉 ' + result.removed.length + ' 个文件（' + result.mb + ' MB）');
         }
       } catch (error) { log('日志轮转失败：' + (error?.message ?? error)); }
+      // 天气：每小时刷一次缓存（拉不到就保留旧的，不编造）
+      if (!ambientAt || Date.now() - ambientAt > 60 * 60 * 1000) {
+        ambientAt = Date.now();
+        void refreshWeather({}).catch(() => {});
+      }
       // SQLite 索引增量同步：只补新行，读数万条也就几十毫秒
       try {
         const now = Date.now();
@@ -12311,7 +12318,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-    const base = pendingLine + reasonHintLine(reason) + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
