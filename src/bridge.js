@@ -13593,6 +13593,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
               // 只按参数判重是有意的：她正常也会连发 3 条消息（参数不同）、连续 wait 两次。
               if (contextBudget.limits.repeatToolLimit > 0
                 && !REPEATABLE_TOOLS.has(shortToolName(toolName))
+                  && (pendingSendToolCalls.get(frame.sessionId)?.size ?? 0) === 0   // 发送中不打断，避免留下半截气泡
                 && !repeatBrokenTurns.has(frame.sessionId)) {
                 let signature = '';
                 try { signature = `${toolName}|${JSON.stringify(rawArgs ?? null)}`; } catch { signature = `${toolName}|?`; }
