@@ -1,7 +1,7 @@
 // 备份密钥托管：把 state/backup-key 导出成一份可离线保存的恢复包，
 // 并用最新出站备份做一次解密验证（证明这把 key 真的能恢复）。
 //
-// 输出目录：config.backup.keyEscrowDir，默认 %USERPROFILE%\Documents\xiaoyu-recovery
+// 输出目录：config.backup.keyEscrowDir，默认 %LOCALAPPDATA%\xiaoyu\recovery（不参与 OneDrive 同步）
 // 注意：backup-key.txt 里是明文密钥。存进密码管理器/离线 U 盘后，请删除本文件。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,7 +29,9 @@ function offsiteDir() {
 
 function escrowDir() {
   if (opt.keyEscrowDir) return String(opt.keyEscrowDir).replace(/^~/, process.env.USERPROFILE || '');
-  return path.join(process.env.USERPROFILE || ROOT, 'Documents', 'xiaoyu-recovery');
+  // 默认放 LOCALAPPDATA：Documents 常被 OneDrive 同步，
+  // 明文密钥跟着云同步等于把钥匙贴在保险箱上（安全审查 P1-06）。
+  return path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE || ROOT, 'xiaoyu', 'recovery');
 }
 
 function decrypt(key, src) {
@@ -82,6 +84,11 @@ const keyText = [
   '⚠️ 这是明文密钥。存进密码管理器或离线 U 盘后，请删除本文件。',
   '',
 ].join('\n');
+// 明文密钥只落在默认目录（LOCALAPPDATA，不参与云同步）；别处必须显式同意。
+if (path.resolve(out) !== path.resolve(path.join(String(process.env.LOCALAPPDATA || ''), 'xiaoyu', 'recovery')) && !process.argv.includes('--allow-plaintext-key')) {
+  console.error('写到非默认目录需要显式同意：加 --allow-plaintext-key');
+  process.exit(2);
+}
 fs.writeFileSync(path.join(out, 'backup-key.txt'), keyText, 'utf8');
 
 const recovery = [
