@@ -454,6 +454,18 @@ function toolDisabledNow(name) {
   return toolState.disabled.has(name);
 }
 {
+  // 统一记录工具调用：以前只有白名单内的才进 tool-calls.jsonl，
+  // 所以『哪些工具从没用过』这类统计不可信。现在在注册层统一记。
+  function logToolCall(name, input, outcome, ms) {
+    try {
+      const file = path.join(process.env.LOCALAPPDATA || '', 'xiaoyu', 'state', 'tool-calls.jsonl');
+      fs.appendFileSync(file, JSON.stringify({
+        type: 'result', time: new Date().toISOString(), tool: name,
+        ok: !outcome?.isError, ms: Number(ms) || 0, key: String(input?.key ?? '').slice(0, 40),
+      }) + '\n', 'utf8');
+    } catch { /* 记不下来不影响工具 */ }
+  }
+
   const registerTool = server.tool.bind(server);
   server.tool = (name, ...rest) => {
     const flag = TOOL_CONFIG_FLAGS[name];
@@ -470,10 +482,12 @@ function toolDisabledNow(name) {
     if (typeof rest[idx] === 'function') {
       const handler = rest[idx];
       rest[idx] = async (...args) => {
+        const __t0 = Date.now();
+        const __finish = (o) => { logToolCall(name, args[0] || {}, o, Date.now() - __t0); return o; };
         if (toolDisabledNow(name)) {
           return { content: [{ type: 'text', text: `工具已停用：${name}。在管家面板「工具」页可以重新启用。` }], isError: true };
         }
-        const invoke = () => deliveryCallScope.run({ tool: name, inputHash: digest({ ...(args[0] || {}), token: undefined }) }, () => handler(...args));
+        const invoke = async () => __finish(await deliveryCallScope.run({ tool: name, inputHash: digest({ ...(args[0] || {}), token: undefined }) }, () => handler(...args)));
         if (!['qq_sketch','qq_say','qq_send_image'].includes(name)) return invoke();
         const input = args[0] || {}, key = input.key || 'machine';
         if (input.key) {
