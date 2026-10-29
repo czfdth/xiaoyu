@@ -28,7 +28,10 @@ export function assertLocalRequest(req, reply) {
   }
   const type = String(req.headers['content-type'] ?? '');
   // DELETE 通常没有 body，不强求 content-type；写 body 的 POST/PUT/PATCH 必须是 JSON。
-  if (req.method !== 'DELETE' && !type.includes('application/json')) {
+  // 登录页是普通 HTML 表单（application/x-www-form-urlencoded），要放行，否则表单永远登不进来；
+  // 其它写接口仍然必须是 JSON（安全审查 P1-02）。
+  const isLoginForm = req.url === '/api/remote/login' && type.includes('application/x-www-form-urlencoded');
+  if (req.method !== 'DELETE' && !isLoginForm && !type.includes('application/json')) {
     reply.code(415).send({ error: '只接受 application/json' });
     return false;
   }

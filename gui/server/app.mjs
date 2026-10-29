@@ -50,6 +50,16 @@ npm run build</code></pre>
 
 export async function buildApp({ guiDir }) {
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
+  // 登录页是普通 HTML 表单，提交时 Content-Type 是 application/x-www-form-urlencoded。
+  // Fastify 默认只解析 JSON，不注册这个解析器的话，直接提交表单会 415 而不是校验密码（安全审查 P1-02）。
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (req, body, done) => {
+    try {
+      const params = new URLSearchParams(String(body ?? ''));
+      done(null, Object.fromEntries(params.entries()));
+    } catch (error) {
+      done(error);
+    }
+  });
   const distDir = path.resolve(guiDir, 'dist');
 
   // 前端没构建时给一张说明页，而不是 500
