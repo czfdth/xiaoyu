@@ -3688,10 +3688,16 @@ async function main() {
    * 桥接刚起来时日账是 0，但今天可能已经花掉几百万 token 了。
    * 从 token 账本把"今天的"补回来，日预算才是真实用量（只读最后 5000 行）。
    */
+  let lastSeedAt = 0;
+
   function seedDailyFromLedger() {
     try {
       const today = dayKey();
-      if (dailyState.day === today && dailyState.tokens > 0) return;
+      // 以前是"今天已经有 token 就直接 return"，结果这个函数只在启动时跑过一次，
+      // 后面挂的日报 / 日志轮转 / SQLite 同步 / 断线补偿全都成了摆设。
+      // 现在允许每分钟进来一次（重算 5000 行账本约 2ms）。
+      if (dailyState.day === today && dailyState.tokens > 0 && Date.now() - lastSeedAt < 55000) return;
+      lastSeedAt = Date.now();
       const lines = fs.readFileSync(TOKEN_USAGE_FILE, 'utf8').split('\n').filter(Boolean).slice(-5000);
       let sum = 0;
       for (const line of lines) {
@@ -3780,7 +3786,7 @@ async function main() {
         const nowMs = Date.now();
         const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
         const day = dayKey(nowMs);
-        if (hour >= 8 && hour < 10 && dailyReportDay !== day && cfg.ownerQQ) {
+        if (hour >= 8 && hour < 23 && dailyReportDay !== day && cfg.ownerQQ) {
           dailyReportDay = day;
           const report = buildDailyReport();
           const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');

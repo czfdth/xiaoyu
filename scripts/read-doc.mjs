@@ -15,6 +15,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { PC_ROOTS, APP_ROOT } from '../src/paths.js';
+
+// ── 读取范围校验 ──────────────────────────────────────────────────────────
+// 工具描述里写"只允许桌面/文档/下载/工作目录"不够——校验必须在这一层做，
+// 否则模型可以让它读 config.json / state 令牌 / 备份密钥（安全审查 P0-02）。
+const DENY_NAMES = new Set([
+  'companion.json', 'companion.json.dpapi', 'companion.json.plain-bak',
+  'config.json', 'remote-secret', 'console-token', 'mode.json',
+  'session-secret', 'backup-key.txt',
+]);
+
+function assertReadable(file) {
+  const abs = path.resolve(String(file ?? ''));
+  if (!fs.existsSync(abs)) throw new Error('文件不存在: ' + abs);
+  const real = fs.realpathSync(abs);
+  const base = path.basename(real).toLowerCase();
+  if (DENY_NAMES.has(base)) throw new Error('拒绝读取敏感文件：' + base);
+  if (/\.(dpapi|pem|key|pfx|p12)$/i.test(base)) throw new Error('拒绝读取密钥类文件：' + base);
+  const roots = [...new Set([...(PC_ROOTS ?? []), APP_ROOT].filter(Boolean).map((r) => path.resolve(r)))];
+  const inside = roots.some((root) => {
+    const rel = path.relative(root, real);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  });
+  if (!inside) throw new Error('只允许读桌面/文档/下载/工作目录里的文件');
+  return real;
+}
 
 const invokedDirectly = !!process.argv[2] && process.argv[1]?.endsWith('read-doc.mjs');
 const file = invokedDirectly ? process.argv[2] : '';
@@ -24,7 +50,8 @@ if (invokedDirectly && !file) {
   process.exit(1);
 }
 
-const abs = path.resolve(file);
+let abs;
+try { abs = assertReadable(file); } catch (error) { console.error('读不了：' + error.message); process.exit(1); }
 if (!fs.existsSync(abs)) {
   console.error('文件不存在:', abs);
   process.exit(1);
@@ -114,7 +141,7 @@ if (asJson) {
 // ── 给工具用的入口 ────────────────────────────────────────────────────────
 // 返回 { file, kind, chars, text }，不打印、不退出，供 MCP 工具调用。
 export function extractDocumentText(target) {
-  const abs = path.resolve(String(target ?? ''));
+  const abs = assertReadable(target);
   if (!fs.existsSync(abs)) throw new Error('文件不存在: ' + abs);
   const ext = path.extname(abs).toLowerCase();
   let kind = 'text';

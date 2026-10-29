@@ -62,7 +62,9 @@ export async function buildApp({ guiDir }) {
     // 局域网访问：非本机请求必须带会话 Cookie，默认只读。
     // 放在最前面，是因为 assertLocalRequest 只认 127.0.0.1，会把手机请求直接 403。
     const remoteCfg = loadRemoteConfig();
-    const local = isLoopback(req.hostname);
+    // 用真实连接地址判本机，不用 Host 头——Host 是客户端说了算的，局域网伪造 Host: 127.0.0.1 就能冒充本机。
+    const peer = String(req.socket?.remoteAddress ?? '');
+    const local = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
     if (!local) {
       if (!remoteCfg.enabled || !remoteCfg.hasPassword) {
         return reply.code(403).send({ error: '远程访问未开启（先在配置页设置口令）' });
@@ -89,7 +91,7 @@ export async function buildApp({ guiDir }) {
     // （实测：手机登录后第一次点保存会被 401 "需要 x-console-token"）。
     if (local) {
       const fromBrowser = Boolean(req.headers.origin) || req.headers['sec-fetch-site'] === 'same-origin';
-      if (req.url.startsWith('/api') && req.method === 'GET' && !fromBrowser && /^\/api\/(memory|journal|her|roles)/.test(req.url)) {
+      if (req.url.startsWith('/api') && req.method === 'GET' && !fromBrowser && !/^\/api\/health/.test(req.url)) {
         try {
           const token = fs.readFileSync(path.join(STATE_DIR, 'console-token'), 'utf8').trim();
           if (token && req.headers['x-console-token'] !== token) {
