@@ -3725,6 +3725,14 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
 
   function seedDailyFromLedger() {
     try {
+      // 心跳计数：证明这个每分钟巡检真的在跑。以前只能"看日志有没有输出"判断，
+      // 而绝大多数分钟是没输出的，于是根本分不清"没跑"和"跑了没事".
+      try {
+        const tickFile = path.join(STATE_DIR, 'maintenance-tick.json');
+        let prev = {};
+        try { prev = JSON.parse(fs.readFileSync(tickFile, 'utf8')); } catch { prev = {}; }
+        fs.writeFileSync(tickFile, JSON.stringify({ count: (Number(prev.count) || 0) + 1, at: Date.now() }), 'utf8');
+      } catch { /* 心跳失败不影响巡检本身 */ }
       const today = dayKey();
       // 以前是"今天已经有 token 就直接 return"，结果这个函数只在启动时跑过一次，
       // 后面挂的日报 / 日志轮转 / SQLite 同步 / 断线补偿全都成了摆设。
