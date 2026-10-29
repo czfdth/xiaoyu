@@ -8571,6 +8571,11 @@ async function main() {
         .catch((error) => {
           lastSendFailed.set(key, true);
           log(`QQ 发送失败 (${key}):`, error?.message ?? error);
+          // 被刹车掐断的发送（SITUATION_PAUSED 等）会在 QQ 侧留下一个「已停止」的空壳。
+          // 不补假消息，只记下来——下次唤醒时她知道"上次有半句话没说完"。
+          if (/SITUATION_PAUSED|AGENCY_HOLD|DELIVERY_UNCERTAIN/.test(String(error?.message ?? ''))) {
+            recordInterrupted({ key, reason: 'send-paused' });
+          }
         })
         .then(() => sleep(cfg.sendDelayMs));
     }
