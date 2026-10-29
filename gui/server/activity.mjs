@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConfig, CONFIG_FILE } from '../../src/paths.js';
+import { HttpError } from './guard.mjs';
 // 本地小工具：写前备份 + 原子写（data.mjs 里那两个没导出，这里自己实现）
 function backup(file) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

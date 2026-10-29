@@ -460,7 +460,7 @@ function toolDisabledNow(name) {
     try {
       const file = path.join(process.env.LOCALAPPDATA || '', 'xiaoyu', 'state', 'tool-calls.jsonl');
       fs.appendFileSync(file, JSON.stringify({
-        type: 'result', time: new Date().toISOString(), tool: name,
+        type: 'call', time: new Date().toISOString(), tool: name,
         ok: !outcome?.isError, ms: Number(ms) || 0, key: String(input?.key ?? '').slice(0, 40),
       }) + '\n', 'utf8');
     } catch { /* 记不下来不影响工具 */ }

@@ -71,6 +71,19 @@ import { failureLine } from './failures.js';
 import { activate } from './activation.js';
 import { recordInterrupted, interruptedLine } from './interrupted.js';
 import { ambientLine, refreshWeather } from './ambient.js';
+
+// 「要睡了」这类道别是她说心里话的时刻：这时候提示她可以留张便签。
+// 放在模块作用域——之前放进 buildWakePromptV2 里，handleIncoming 访问不到，
+// 触发 ReferenceError 又被空 catch 吞掉，等于这个功能从来没生效过。
+let noteHintAt = 0;
+const FAREWELL = /(晚安|睡了|睡觉|先睡|我睡了|下线|明天见|拜拜|再见|出门|走了)/;
+
+function noteFarewellHint(now = Date.now()) {
+  if (!noteHintAt || now - noteHintAt > 10 * 60 * 1000) return "";
+  noteHintAt = 0;
+  return "【便签】他刚跟你道别。如果有想留下的话，可以写一张便签放他桌面（qq_pc_save_note）；不想写就当没这句。\n\n";
+}
+
 import { openDb, syncJournal, closeDb } from './db.js';
 import { launchGateway } from '../gui/server/gateway.mjs';
 import { keyHealth, diskReport, cleanup, restoreDrill, indexHealth, composeDailyReport } from './ops.js';
@@ -2694,7 +2707,8 @@ async function main() {
       }
       if (!verdict.interrupt) return;
       // 正在发消息时不打断：发到一半被掐断，QQ 侧会留一个「⏹️ 已停止」的空壳。下一拍再判。
-      if (pendingSendToolCalls.size > 0) return;
+      // 只看当前会话：全局判断会让一个群的长发送拖住别的群的预算中断。
+      if (pendingSendToolCalls.get(sessionId) > 0) return;
       // 学习会话（黑话抽取等）没有 QQ 会话映射，打断它只会让内部任务半途而废。
       const key = reverse.get(sessionId);
       if (!key) return;
@@ -12318,16 +12332,6 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     // 时间感放在 base 的最末尾：紧接着就是【唤醒】原因与行动指令，位置最显眼。
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
-  // 「要睡了」这类道别是她说心里话的时刻：这时候提示她可以留张便签，
-  // 比每天定点催她写要自然得多（她现有 6 张便签里有一半和道别/早上有关）。
-  let noteHintAt = 0;
-  const FAREWELL = /(晚安|睡了|睡了|睡觉|先睡|我睡了|下线|明天见|拜拜|再见|出门|走了)/;
-
-  function noteFarewellHint(now = Date.now()) {
-    if (!noteHintAt || now - noteHintAt > 10 * 60 * 1000) return "";
-    noteHintAt = 0;   // 只用一次
-    return "【便签】他刚跟你道别。如果有想留下的话，可以写一张便签放他桌面（qq_pc_save_note）；不想写就当没这句。\n\n";
-  }
 
     const base = pendingLine + reasonHintLine(reason) + noteFarewellHint() + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
@@ -14212,6 +14216,12 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   startLocalModelWatch();
   startVitalsWatch();
   seedDailyFromLedger();
+
+  // 这一函数里挂着日报 / 日志轮转 / SQLite 同步 / 夜间日常 / 天气刷新，
+  // 以前只在启动时跑一次，等于全部失效。这里补一个真正的每分钟调度。
+  setInterval(() => {
+    try { seedDailyFromLedger(); } catch (error) { log("维护巡检失败：" + (error?.message ?? error)); }
+  }, 60 * 1000);
   recordBootAndCheckStorm();
   startAlertWatch();
   startDriftWatch();
