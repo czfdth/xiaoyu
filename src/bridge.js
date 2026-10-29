@@ -75,6 +75,18 @@ import { ambientLine, refreshWeather } from './ambient.js';
 // 「要睡了」这类道别是她说心里话的时刻：这时候提示她可以留张便签。
 // 放在模块作用域——之前放进 buildWakePromptV2 里，handleIncoming 访问不到，
 // 触发 ReferenceError 又被空 catch 吞掉，等于这个功能从来没生效过。
+// 日报发过没有要落盘：只存在内存里的话，桥接每重启一次就会重发一遍
+// （今晚因为反复部署，她收到了三条一样的日报）。
+const DAILY_REPORT_MARKER = path.join(STATE_DIR, 'daily-report-marker');
+
+function dailyReportSentDay() {
+  try { return fs.readFileSync(DAILY_REPORT_MARKER, "utf8").trim(); } catch { return ""; }
+}
+
+function markDailyReportSent(day) {
+  try { fs.mkdirSync(STATE_DIR, { recursive: true }); fs.writeFileSync(DAILY_REPORT_MARKER, day, "utf8"); } catch { /* 记不下来也不阻塞发送 */ }
+}
+
 let noteHintAt = 0;
 const FAREWELL = /(晚安|睡了|睡觉|先睡|我睡了|下线|明天见|拜拜|再见|出门|走了)/;
 
@@ -3807,8 +3819,9 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
         const nowMs = Date.now();
         const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
         const day = dayKey(nowMs);
-        if (hour >= 8 && hour < 23 && dailyReportDay !== day && cfg.ownerQQ) {
+        if (hour >= 8 && hour < 23 && dailyReportDay !== day && dailyReportSentDay() !== day && cfg.ownerQQ) {
           dailyReportDay = day;
+          markDailyReportSent(day);
           const report = buildDailyReport();
           const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
           if (text) {
