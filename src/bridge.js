@@ -3834,10 +3834,13 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
           const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
           if (text) {
             // sendToQQ 自带发送队列，同步函数里不 await（否则语法错——这个坑今天第三次踩）
-            void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200));
-            markDailyReportSent(day);   // 发送队列已接收才标记，失败不落盘
-            log('日报已发（' + day + '）');
-            appendActivity('[daily-report] 已发每日小结');
+            void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200))
+              .then(() => {
+                markDailyReportSent(day);   // 真的发出去了才落盘；失败保留重试机会
+                log('日报已发（' + day + '）');
+                appendActivity('[daily-report] 已发每日小结');
+              })
+              .catch((error) => { log('日报发送失败，下次重试：' + (error?.message ?? error)); });
           }
         }
       } catch (error) { log('日报推送失败：' + (error?.message ?? error)); }
@@ -12944,6 +12947,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
 
   // QQ 消息 → DSH prompt
   async function handleIncoming(kind, id, event, cfg) {
+    const key = convKey(kind, id);
     // 道别关键词命中就打个标记，下一轮提示词里带一句「可以留张便签」
     try {
       const rawText = String(event?.raw_message ?? event?.message ?? "");
@@ -12959,7 +12963,6 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
         return;
       }
     }
-    const key = convKey(kind, id);
     if (!modeAllowed(key, kind, id, cfg, currentMode)) {
       log(`忽略未授权会话 ${key}（当前模式 ${currentMode}，来自 ${event.user_id}）`);
       return;
