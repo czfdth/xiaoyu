@@ -3836,7 +3836,14 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
             // sendToQQ 自带发送队列，同步函数里不 await（否则语法错——这个坑今天第三次踩）
             void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200))
               .then(() => {
-                markDailyReportSent(day);   // 真的发出去了才落盘；失败保留重试机会
+                // sendToQQ 内部会吞掉发送错误（保证队列不断），所以这里要查 lastSendFailed：
+                // 否则网关拒收也会被当成发送成功，当天就不再补发了。
+                if (lastSendFailed.get('private:' + cfg.ownerQQ)) {
+                  dailyReportDay = '';   // 没送达：恢复重试资格
+                  log('日报未送达（网关拒绝或超时），下次巡检重试');
+                  return;
+                }
+                markDailyReportSent(day);
                 log('日报已发（' + day + '）');
                 appendActivity('[daily-report] 已发每日小结');
               })
