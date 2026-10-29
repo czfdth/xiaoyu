@@ -3831,23 +3831,26 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
           dailyReportDay = day;
 
           const report = buildDailyReport();
-          const text = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
-          if (text) {
-            // sendToQQ 自带发送队列，同步函数里不 await（否则语法错——这个坑今天第三次踩）
-            void sendToQQ('private:' + cfg.ownerQQ, String(text).slice(0, 1200))
-              .then(() => {
-                // sendToQQ 内部会吞掉发送错误（保证队列不断），所以这里要查 lastSendFailed：
-                // 否则网关拒收也会被当成发送成功，当天就不再补发了。
-                if (lastSendFailed.get('private:' + cfg.ownerQQ)) {
-                  dailyReportDay = '';   // 没送达：恢复重试资格
-                  log('日报未送达（网关拒绝或超时），下次巡检重试');
-                  return;
-                }
+          const body = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
+          if (body) {
+            // 不走 sendToQQ 队列：那个队列会吞异常、失败标记还按会话共享，
+            // 同会话再发一条就会把标记清掉，日报会被误判成成功。
+            // 这里直接发送并拿本次调用的结果（失败就抛，交给下面的 catch 恢复重试资格）。
+            void (async () => {
+              try {
+                await withTimeout(
+                  bot.sendPrivateMessage(Number(cfg.ownerQQ), text(escapeCqText(String(body).slice(0, 1200)))),
+                  SEND_TIMEOUT_MS,
+                  'daily-report',
+                );
                 markDailyReportSent(day);
                 log('日报已发（' + day + '）');
                 appendActivity('[daily-report] 已发每日小结');
-              })
-              .catch((error) => { log('日报发送失败，下次重试：' + (error?.message ?? error)); });
+              } catch (error) {
+                dailyReportDay = '';   // 没送达：恢复当天重试
+                log('日报未送达，下次巡检重试：' + (error?.message ?? error));
+              }
+            })();
           }
         }
       } catch (error) { log('日报推送失败：' + (error?.message ?? error)); }
