@@ -61,23 +61,41 @@ export function verifyPassword(password, stored) {
 }
 
 /** 签发会话：exp.nonce.hmac。 */
+/**
+ * 密码指纹：哈希的前 12 位，塞进会话签名。
+ * 目的：改密码之后，之前签出去的 Cookie 立刻失效（安全审查 P1-03）。
+ * 用哈希而不是明文，不泄露可逆信息。
+ */
+function passwordFingerprint() {
+  try {
+    const cfg = loadRemoteConfig();
+    const hash = String(cfg && cfg.passwordHash ? cfg.passwordHash : "");
+    if (!hash) return "none";
+    return crypto.createHash("sha256").update(hash).digest("hex").slice(0, 12);
+  } catch {
+    return "none";
+  }
+}
+
 export function signSession(now = Date.now()) {
   const exp = now + SESSION_DAYS * 86400000;
   const nonce = crypto.randomBytes(8).toString('hex');
-  const payload = `${exp}.${nonce}`;
+  const payload = `${exp}.${nonce}.${passwordFingerprint()}`;
   const mac = crypto.createHmac('sha256', secret()).update(payload).digest('hex');
   return `${payload}.${mac}`;
 }
 
 export function verifySession(cookie, now = Date.now()) {
-  const parts = String(cookie ?? '').split('.');
-  if (parts.length !== 3) return false;
-  const [exp, nonce, mac] = parts;
+  const parts = String(cookie ?? "").split(".");
+  // 新格式 exp.nonce.fp.mac（4 段）。旧格式 3 段一律判失效：改密码后旧 Cookie 必须作废。
+  if (parts.length !== 4) return false;
+  const [exp, nonce, fp, mac] = parts;
   if (!Number(exp) || Number(exp) < now) return false;
-  const payload = `${exp}.${nonce}`;
-  const expect = crypto.createHmac('sha256', secret()).update(payload).digest('hex');
-  const a = Buffer.from(mac, 'hex');
-  const b = Buffer.from(expect, 'hex');
+  if (fp !== passwordFingerprint()) return false;
+  const payload = `${exp}.${nonce}.${fp}`;
+  const expect = crypto.createHmac("sha256", secret()).update(payload).digest("hex");
+  const a = Buffer.from(mac, "hex");
+  const b = Buffer.from(expect, "hex");
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
