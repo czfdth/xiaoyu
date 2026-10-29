@@ -8761,7 +8761,10 @@ async function main() {
       const maxBubbles = Number(cfg.socialV2?.send?.maxBubbles);
       if (Number.isFinite(maxBubbles) && maxBubbles >= 2 && Array.isArray(messages) && messages.length >= 2) {
         const joinedAll = messages.join('');
-        if (joinedAll.length <= 24) {
+        // 阈值可配；默认 0 = 不合并。她的人格卡明确要求「短句 + 一次 2~4 条」，
+        // 硬合并会和人格打架（这正是她显得话少的原因之一）。
+        const mergeMax = Number(cfg.socialV2?.send?.mergeShortMaxChars ?? 0);
+        if (mergeMax > 0 && joinedAll.length <= mergeMax) {
           messages = [messages.join('，')];
         } else if (messages.length > maxBubbles) {
           const head = messages.slice(0, maxBubbles - 1);
