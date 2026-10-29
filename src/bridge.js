@@ -2698,8 +2698,13 @@ async function main() {
       log(`⛔ 上下文预算：${key} 单回合已 ${verdict.steps} 步（上限 ${contextBudget.limits.maxStepsPerTurn}），打断这一回合`);
       recordInterrupted({ key, sessionId, steps: verdict.steps, reason: 'context-budget' });
       appendActivity(`${key} [context-budget] 单回合 ${verdict.steps} 步超限，已打断`);
-      void withTimeout(api.stopSessionWork(sessionId), DSH_CONTROL_TIMEOUT_MS, 'stopSessionWork')
-        .catch((error) => log(`⚠️ 上下文预算打断失败 ${key}：${error?.message ?? error}`));
+      // 打断前先等正在发的那条消息落地：否则 QQ 侧会留下一个「⏹️ 已停止」的空壳。
+      // 08:41 那次就是——13 步打断时正有一条在发，用户只看到一个"已停止"。
+      recordInterrupted({ key, sessionId, steps: verdict.steps, reason: 'interrupt-mid-send' });
+      setTimeout(() => {
+        void withTimeout(api.stopSessionWork(sessionId), DSH_CONTROL_TIMEOUT_MS, 'stopSessionWork')
+          .catch((error) => log('⚠️ 上下文预算打断失败 ' + key + '：' + (error?.message ?? error)));
+      }, 2500);
       // 打断之后必须把「回合进行中」的标记清掉，否则租约（15 分钟）内这个会话都算忙，
       // 后续消息全部被判定为「会话繁忙」而排队——今天 18:05 就这么卡了 4 条。
       v2TurnStartAt.delete(sessionId);
