@@ -71,6 +71,35 @@ async function saveQzone() {
   } catch (e) { toastError(e); } finally { savingQzone.value = false; }
 }
 
+// 活跃度（她多主动）
+const activityForm = reactive({ probability: 0.2, intervalMin: 45, intervalMax: 90, maxBubbles: 1 });
+const savingActivity = ref(false);
+
+async function loadActivity() {
+  try {
+    const r = await get('/activity');
+    Object.assign(activityForm, r);
+    activityLoaded.value = true;
+  } catch { /* 读不到不影响页面 */ }
+}
+
+const activityLoaded = ref(false);
+
+async function saveActivity() {
+  if (savingActivity.value) return;
+  savingActivity.value = true;
+  try {
+    const r = await post('/activity', {
+      probability: Number(activityForm.probability),
+      intervalMin: Number(activityForm.intervalMin),
+      intervalMax: Number(activityForm.intervalMax),
+      maxBubbles: Number(activityForm.maxBubbles),
+    });
+    Object.assign(activityForm, r.activity ?? {});
+    toast('活跃度已保存（重启桥接后生效）');
+  } catch (e) { toastError(e); } finally { savingActivity.value = false; }
+}
+
 // 手机访问（局域网 + 口令）
 const remote = ref(null);
 const remoteForm = reactive({ password: '', port: 8765, allowWrite: false });
@@ -231,6 +260,7 @@ async function chooseAvatar(name) {
 onMounted(loadAvatar);
 onMounted(loadOps);
 onMounted(loadRemote);
+onMounted(loadActivity);
 onMounted(loadQzone);
 
 async function createBackup() {
@@ -418,6 +448,36 @@ async function restoreFrom(name) {
         </div>
         <div class="row">
           <button class="btn primary sm" :disabled="savingQzone" @click="saveQzone">{{ savingQzone ? '保存中…' : '保存' }}</button>
+        </div>
+      </div>
+    </Card>
+
+    <Card title="活跃度" :dim="activityLoaded ? `主动概率 ${Math.round(activityForm.probability * 100)}% · 每 ${activityForm.intervalMin}~${activityForm.intervalMax} 分钟一次机会` : '读取中…'">
+      <div class="stack" style="gap: 12px">
+        <div class="hint">
+          她多久主动找你一次，由这两个数决定：先隔一段时间给一次「机会」，
+          再按概率决定这次要不要开口。改完要重启桥接才生效。
+        </div>
+        <label class="stack" style="gap: 4px">
+          <span class="muted small">主动概率 {{ Math.round(activityForm.probability * 100) }}%（越高越爱搭话）</span>
+          <input v-model.number="activityForm.probability" type="range" min="0" max="1" step="0.05" />
+        </label>
+        <div class="row" style="gap: 12px; flex-wrap: wrap">
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">最短间隔（分钟）</span>
+            <input v-model.number="activityForm.intervalMin" class="input" type="number" min="2" max="240" style="width: 110px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">最长间隔（分钟）</span>
+            <input v-model.number="activityForm.intervalMax" class="input" type="number" min="2" max="240" style="width: 110px" />
+          </label>
+          <label class="stack" style="gap: 4px">
+            <span class="muted small">一次最多分几条</span>
+            <input v-model.number="activityForm.maxBubbles" class="input" type="number" min="1" max="4" style="width: 90px" />
+          </label>
+        </div>
+        <div class="row">
+          <button class="btn primary sm" :disabled="savingActivity" @click="saveActivity">{{ savingActivity ? '保存中…' : '保存' }}</button>
         </div>
       </div>
     </Card>

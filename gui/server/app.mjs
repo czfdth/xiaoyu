@@ -34,6 +34,7 @@ import { kgView } from './kg.mjs';
 import { herLiveView } from './live.mjs';
 import { lifeTimeline } from './timeline.mjs';
 import { searchAll } from './search.mjs';
+import { activityView, saveActivity } from './activity.mjs';
 import { lifeView, generateChronicle, chronicleList, readChronicle } from './life.mjs';
 import { listImages, listAudio, imagePath, decorImages, portraitImage, emotionImage, avatarImage, avatarChoices, listNotes, notePath } from './works.mjs';
 import { listActions, actionFile } from './pet.mjs';
@@ -279,6 +280,9 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
   // 界面皮肤：设置存 config.json，换设备也一致
   app.get('/api/skin', async () => skinView());
   // 说说设置：概率 / 每天上限 / 最小间隔 / 免打扰
+  // 活跃度：主动概率 / 间隔 / 分条数（用户自己调）
+  app.get('/api/activity', async () => activityView());
+  app.post('/api/activity', async (req) => saveActivity(req.body ?? {}));
   app.get('/api/qzone', async () => qzoneView());
   app.post('/api/qzone', async (req) => saveQzone(req.body ?? {}));
   app.post('/api/skin', async (req) => {
