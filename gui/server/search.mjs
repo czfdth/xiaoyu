@@ -100,13 +100,14 @@ function searchKnowledge(q, limit) {
  * @param {string} q 关键词
  * @param {{limit?:number}} [opts]
  */
-export function searchAll(q, { limit = 20 } = {}) {
+export function searchAll(q, { limit = 20, includeJournal = true } = {}) {
   const query = String(q ?? '').trim();
   if (query.length < 1) return { query, groups: {}, total: 0 };
   const per = Math.max(3, Math.min(30, limit));
 
   const groups = {
-    journal: searchJournal(query, per),
+    // 聊天记录最敏感：默认能搜，但工具层会按配置关掉它（安全审查 P0-03）
+    journal: includeJournal ? searchJournal(query, per) : [],
     fact: searchFacts(query, per),
     diary: searchDiary(query, Math.min(per, 10)),
     knowledge: searchKnowledge(query, Math.min(per, 10)),
