@@ -33,7 +33,10 @@ function assertReadable(file) {
   const base = path.basename(real).toLowerCase();
   if (DENY_NAMES.has(base)) throw new Error('拒绝读取敏感文件：' + base);
   if (/\.(dpapi|pem|key|pfx|p12)$/i.test(base)) throw new Error('拒绝读取密钥类文件：' + base);
-  const roots = [...new Set([...(PC_ROOTS ?? []), APP_ROOT].filter(Boolean).map((r) => path.resolve(r)))];
+  // 不用 APP_ROOT：整个程序目录里有 state/（令牌）、backups/（含凭据）、logs/，
+  // 允许读它等于把所有敏感目录一起放进来（复审指出）。只保留三个用户目录。
+  const userDirs = (PC_ROOTS ?? []).filter((r) => APP_ROOT && path.resolve(r) !== path.resolve(APP_ROOT));
+  const roots = [...new Set(userDirs.map((r) => path.resolve(r)))];
   const inside = roots.some((root) => {
     const rel = path.relative(root, real);
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
