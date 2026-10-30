@@ -72,6 +72,7 @@ import { activate } from './activation.js';
 import { recordInterrupted, interruptedLine } from './interrupted.js';
 import { ambientLine, refreshWeather } from './ambient.js';
 import { longFormHint } from './longform.js';
+import { voiceHint } from './voice-hint.js';
 
 // 「要睡了」这类道别是她说心里话的时刻：这时候提示她可以留张便签。
 // 放在模块作用域——之前放进 buildWakePromptV2 里，handleIncoming 访问不到，
@@ -12373,7 +12374,7 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     const timeSenseLine = buildTimeSenseLine(st);
     const staleStateLine = staleSelfStateLine();
 
-    const base = pendingLine + reasonHintLine(reason) + noteFarewellHint(key) + longFormHint({ key }) + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
+    const base = pendingLine + reasonHintLine(reason) + noteFarewellHint(key) + longFormHint({ key }) + voiceHint({ key }) + ambientLine() + failureLine() + interruptedLine({ key }) + rhythmNote() + weeklyReviewLine() + wanderLine() + remindersLine() + missedRitualsLine() + ownerFactsLine() + realityHint(STATE_FILES.realityEvents, key) + roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine + staleStateLine + timeSenseLine;
     // 唤醒原因里的那条消息本身多旧：`atMention@seq194` 这种形态能反查到原消息。
     const triggeredSeq = wakeReasonSeq(reason);
     const triggeredMsg = triggeredSeq ? findV2MessageBySeq(st, triggeredSeq) : null;
