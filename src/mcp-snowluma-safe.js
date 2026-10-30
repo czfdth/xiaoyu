@@ -617,11 +617,11 @@ server.tool(
   },
   async ({ q, limit }) => {
     try {
-      const { searchAll } = await import('../gui/server/search.mjs');
+      const { searchAllHybrid } = await import('../gui/server/search.mjs');
       // 默认**不搜聊天记录**：群友可以用话术诱导她搜私聊内容（安全审查 P0-03）。
       // 想让它在私聊里全量搜，需要在 config 里显式打开 socialV2.tools.memorySearchJournal。
       const includeJournal = cfg.socialV2?.tools?.memorySearchJournal === true;
-      const r = searchAll(String(q ?? ''), { limit: Math.max(1, Math.min(20, Number(limit) || 5)), includeJournal });
+      const r = await searchAllHybrid(String(q ?? ''), { limit: Math.max(1, Math.min(20, Number(limit) || 5)), includeJournal });
       if (!r.total) return { content: [{ type: 'text', text: `没搜到「${q}」。` }] };
       const titles = { journal: '聊天记录', fact: '记得的事', diary: '日记', knowledge: '知识库' };
       const lines = [`搜「${q}」共 ${r.total} 条：`];

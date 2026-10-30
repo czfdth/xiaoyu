@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { STATE_DIR, STATE_FILES } from '../src/paths.js';
-import { searchAll } from '../gui/server/search.mjs';
+import { searchAllHybrid } from '../gui/server/search.mjs';
 
 const args = process.argv.slice(2);
 const num = (flag, dflt) => {
@@ -50,18 +50,51 @@ for (let d = days; d >= 1; d -= 1) {
   }
 }
 
-// 2) 每条取前 4 个汉字当查询（要求这 4 个字在全文里只出现一次，减少巧合命中）
+// 2) 出题：清洗噪声 → 取 4 字窗口 → 要求这个窗口在全语料里出现 ≤2 次
+//    以前的取法是"前 4 个字 + 原文唯一"，结果出来一堆「@小鱼」「你快去」这种高频词，
+//    recall 虚高到 88%。真正有区分度的查询应该是在整个语料里都很罕见的片段。
+function cleanForQuery(text) {
+  return String(text ?? '')
+    .replace(/\[图片\]|\[表情\]|\[视频\]|\[语音\]/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/@\S+/g, ' ')
+    .replace(/[^\u4e00-\u9fa5]/g, '')   // 只留中文
+    .trim();
+}
+
+const corpus = rows.map((r) => cleanForQuery(r.text)).join('');
+const countInCorpus = (gram) => {
+  let n = 0;
+  let i = corpus.indexOf(gram);
+  while (i >= 0) { n += 1; i = corpus.indexOf(gram, i + 1); }
+  return n;
+};
+
 const queries = [];
 const used = new Set();
 for (const r of rows) {
   if (queries.length >= want) break;
-  const head = r.text.slice(0, 4).replace(/[，。！？、；：""''（）\s]/g, '');
-  if (head.length < 3) continue;
-  if (used.has(head)) continue;
-  const occurrences = r.text.split(head).length - 1;
-  if (occurrences !== 1) continue;
-  used.add(head);
-  queries.push({ query: head, expect: r.text.slice(0, 24), day: r.day, role: r.role });
+  const clean = cleanForQuery(r.text);
+  if (clean.length < 8) continue;
+
+  let picked = '';
+  // 从中间开始找，跳过前缀（"你快去""你发几"这种开头常常是高频短语）
+  for (let i = 2; i + 4 <= clean.length; i += 1) {
+    const gram = clean.slice(i, i + 4);
+    if (used.has(gram)) continue;
+    if (countInCorpus(gram) > 2) continue;   // 全语料最多出现两次
+    picked = gram;
+    break;
+  }
+  if (!picked) continue;
+
+  used.add(picked);
+  queries.push({
+    query: picked,
+    expect: clean.slice(0, 28),
+    day: r.day,
+    role: r.role,
+  });
 }
 
 if (!queries.length) {
@@ -77,11 +110,13 @@ let mrr = 0;
 
 for (const q of queries) {
   const t0 = process.hrtime.bigint();
-  const r = searchAll(q.query, { limit: 5 });
+  const r = await searchAllHybrid(q.query, { limit: 5 });
   lat.push(Number(process.hrtime.bigint() - t0) / 1e6);
 
   const texts = (r.groups?.journal ?? []).map((x) => String(x.text ?? ''));
-  const norm = (s) => s.replace(/…/g, '');
+  // 比对前统一只留中文：检索返回的是原文（带标点/emoji），expect 是清洗过的，
+  // 直接 includes 会因为标点差异全部失配（这就是第一版掉到 12% 的原因）。
+  const norm = (s) => String(s).replace(/[^一-龥]/g, '');
   const found = texts.findIndex((t) => norm(t).includes(norm(q.expect)) || norm(q.expect).includes(norm(t).slice(0, 12)));
   if (found === 0) hit1 += 1;
   if (found >= 0 && found < 3) hit3 += 1;

@@ -35,8 +35,10 @@ function searchJournal(q, limit) {
     db = openDb(dbFile);
     const rows = db.prepare(`
       SELECT day, t, role, text FROM journal
-      WHERE text LIKE ? ESCAPE '!' ORDER BY t DESC LIMIT ?
-    `).all(`%${escapeLike(q)}%`, limit);
+      WHERE text LIKE ? ESCAPE '!'
+      -- 按命中位置和长度排序：以前按时间倒序，命中的那条可能排到第 50 位（评估 recall 只有 52%）。
+      ORDER BY instr(text, ?) ASC, length(text) ASC, t DESC LIMIT ?
+    `).all(`%${escapeLike(q)}%`, q, limit);
     return rows.map((r) => ({
       kind: 'journal',
       at: Number(r.t) || 0,
@@ -120,4 +122,56 @@ export function searchAll(q, { limit = 20, includeJournal = true } = {}) {
   };
   const total = Object.values(groups).reduce((n, arr) => n + arr.length, 0);
   return { query, groups, total };
+}
+
+/**
+ * 混合检索：先走 LIKE（快，几十毫秒），命中太少时补一路语义检索（慢，约 4 秒）。
+ *
+ * 为什么有条件：查询向量要现算（bge-m3 在 CPU 上单条约 4 秒），
+ * 每条搜索都等它不可接受；但只靠 LIKE 时，recall@1 只有 56%。
+ * 折中：LIKE 命中 < 3 条才补语义——难查的才付这个代价。
+ *
+ * @param {string} q
+ * @param {{limit?:number, includeJournal?:boolean, semantic?:boolean}} [opts]
+ */
+export async function searchAllHybrid(q, { limit = 20, includeJournal = true, semantic = true } = {}) {
+  const base = searchAll(q, { limit, includeJournal });
+  const journalCount = base.groups?.journal?.length ?? 0;
+  if (!semantic || !includeJournal || journalCount >= 3) return base;
+
+  try {
+    const { semanticSearch } = await import('../../src/semantic-index.js');
+    const { STATE_FILES } = await import('../../src/paths.js');
+    const hits = await semanticSearch({
+      query: q,
+      file: STATE_FILES.semanticIndex,
+      k: Math.max(3, Math.min(10, limit)),
+      kinds: ['journal', 'memory', 'diary', 'knowledge', 'fact'],
+      minScore: 0.5,
+    });
+    if (!hits.length) return base;
+
+    const seen = new Set((base.groups.journal ?? []).map((x) => String(x.raw ?? x.text ?? '')));
+    const merged = [...(base.groups.journal ?? [])];
+    for (const h of hits) {
+      const text = String(h.text ?? '');
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      merged.push({
+        kind: 'journal',
+        at: Number(h.at) || 0,
+        who: '',
+        text,
+        raw: text,
+        score: Number(h.score) || 0,
+        via: 'semantic',
+      });
+      if (merged.length >= limit) break;
+    }
+    const groups = { ...base.groups, journal: merged.slice(0, limit) };
+    const total = Object.values(groups).reduce((n, arr) => n + arr.length, 0);
+    return { ...base, groups, total };
+  } catch {
+    return base;   // 语义检索失败就用 LIKE 的结果，不影响可用性
+  }
 }
