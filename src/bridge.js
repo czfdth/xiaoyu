@@ -85,6 +85,28 @@ function dailyReportSentDay() {
   try { return fs.readFileSync(DAILY_REPORT_MARKER, "utf8").trim(); } catch { return ""; }
 }
 
+// 发送中的标记：超时并不等于没送到。没有这个标记时，一次超时会在下一分钟再发一遍。
+const DAILY_SENDING = path.join(STATE_DIR, 'daily-report-sending');
+const SENDING_TTL_MS = 120000;   // 两分钟内认为"还在发"
+
+function dailyReportInFlight(now = Date.now()) {
+  try {
+    const ts = Number(fs.readFileSync(DAILY_SENDING, 'utf8').trim()) || 0;
+    if (!ts) return false;
+    if (now - ts < SENDING_TTL_MS) return true;
+    fs.unlinkSync(DAILY_SENDING);   // 过期的残留，清掉允许重试
+    return false;
+  } catch { return false; }
+}
+
+function markDailyReportSending(stamp = Date.now()) {
+  try { fs.writeFileSync(DAILY_SENDING, String(stamp), 'utf8'); } catch { /* 忽略 */ }
+}
+
+function clearDailyReportSending() {
+  try { fs.unlinkSync(DAILY_SENDING); } catch { /* 忽略 */ }
+}
+
 function markDailyReportSent(day) {
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); fs.writeFileSync(DAILY_REPORT_MARKER, day, "utf8"); } catch { /* 记不下来也不阻塞发送 */ }
 }
@@ -3833,8 +3855,9 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
         const nowMs = Date.now();
         const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
         const day = dayKey(nowMs);
-        if (hour >= 8 && hour < 23 && dailyReportDay !== day && dailyReportSentDay() !== day && cfg.ownerQQ) {
+        if (hour >= 8 && hour < 23 && dailyReportDay !== day && dailyReportSentDay() !== day && !dailyReportInFlight(nowMs) && cfg.ownerQQ) {
           dailyReportDay = day;
+          markDailyReportSending();   // 先占位：超时重试时不会重复发
 
           const report = buildDailyReport();
           const body = typeof report === 'string' ? report : (report?.text ?? report?.summary ?? '');
@@ -3850,11 +3873,13 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
                   'daily-report',
                 );
                 markDailyReportSent(day);
+              clearDailyReportSending();
                 log('日报已发（' + day + '）');
                 appendActivity('[daily-report] 已发每日小结');
               } catch (error) {
                 dailyReportDay = '';   // 没送达：恢复当天重试
-                log('日报未送达，下次巡检重试：' + (error?.message ?? error));
+                clearDailyReportSending();
+              log('日报未送达，下次巡检重试：' + (error?.message ?? error));
               }
             })();
           }
