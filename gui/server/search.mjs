@@ -125,6 +125,25 @@ export function searchAll(q, { limit = 20, includeJournal = true } = {}) {
 }
 
 /**
+ * 按「相关度 + 新鲜度」重排。
+ * 相关度：语义命中用 score；LIKE 命中按出现顺序递减给分。
+ * 新鲜度：越近的事加权越多（14 天为一个半衰期），最多加 0.25。
+ * 直觉：同样命中的两条，你更可能想找最近说过的。
+ */
+function rankWithRecency(items, now = Date.now()) {
+  const HALF_LIFE = 14 * 86400000;
+  return items
+    .map((it, idx) => {
+      const relevance = Number.isFinite(Number(it.score)) ? Number(it.score) : Math.max(0.3, 1 - idx * 0.06);
+      const age = it.at ? Math.max(0, now - Number(it.at)) : HALF_LIFE * 4;
+      const fresh = Math.exp(-age / HALF_LIFE);          // 0~1
+      return { it, rank: relevance + 0.25 * fresh };
+    })
+    .sort((a, b) => b.rank - a.rank)
+    .map((x) => x.it);
+}
+
+/**
  * 混合检索：先走 LIKE（快，几十毫秒），命中太少时补一路语义检索（慢，约 4 秒）。
  *
  * 为什么有条件：查询向量要现算（bge-m3 在 CPU 上单条约 4 秒），
@@ -168,7 +187,7 @@ export async function searchAllHybrid(q, { limit = 20, includeJournal = true, se
       });
       if (merged.length >= limit) break;
     }
-    const groups = { ...base.groups, journal: merged.slice(0, limit) };
+    const groups = { ...base.groups, journal: rankWithRecency(merged, Date.now()).slice(0, limit) };
     const total = Object.values(groups).reduce((n, arr) => n + arr.length, 0);
     return { ...base, groups, total };
   } catch {
