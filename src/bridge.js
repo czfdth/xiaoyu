@@ -3756,6 +3756,9 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
 
       flushDaily();
       // 夜间日常：幻想 / 自省 各一次（缺了才补，一天最多一次）
+        // 一轮只排一个：幻想和自省的唤醒如果同一分钟连着发，第二个必然撞上"会话繁忙"，
+        // 然后被存进待发队列——而待发唤醒没有重试，会话一忙就永远轮不到（自省就这样断了 4 天）。
+        let scheduledThisTick = false;
       try {
         const nowMs = Date.now();
         const hour = Number(new Date().toLocaleString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' }));
@@ -3775,7 +3778,7 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
             } catch { /* 没文件 */ }
             if (!lastAt || dayKey(lastAt) !== day) {
               done.fantasy = true; changed = true;
-              if (wakeable) scheduleWakeV2(wakeable, 'fantasy');
+              if (wakeable) { scheduleWakeV2(wakeable, 'fantasy'); scheduledThisTick = true; }
               log('夜间日常：幻想没写，已排一次唤醒');
             } else { done.fantasy = true; changed = true; }
           }
@@ -3789,7 +3792,7 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
             } catch { /* 没文件 */ }
             if (!lastAt || dayKey(lastAt) !== day) {
               done.introspection = true; changed = true;
-              if (wakeable) scheduleWakeV2(wakeable, 'introspection');
+              if (wakeable && !scheduledThisTick) { scheduleWakeV2(wakeable, 'introspection'); scheduledThisTick = true; }
               log('夜间日常：自省没写，已排一次唤醒');
             } else { done.introspection = true; changed = true; }
           }
