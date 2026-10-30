@@ -25,6 +25,12 @@ const num = (flag, dflt) => {
 const days = num('--days', 7);
 const want = num('-n', 25);
 const save = args.includes('--save');
+const strArg = (flag) => {
+  const i = args.indexOf(flag);
+  return i >= 0 ? String(args[i + 1] ?? '') : '';
+};
+const fromDay = strArg('--from');   // YYYY-MM-DD，可只给一个
+const toDay = strArg('--to');
 
 function readJournal(day) {
   const file = path.join(STATE_FILES.journalDir, day + '.jsonl');
@@ -39,9 +45,24 @@ const dayKey = (at) => new Intl.DateTimeFormat('en-CA', {
 }).format(new Date(at));
 
 // 1) 出题：取 days 天前之后的消息，跳过太短的
+// 取哪几天的记录：--from/--to 优先，否则最近 days 天（不含今天）
+const targets = [];
+if (fromDay || toDay) {
+  const all = fs.readdirSync(STATE_FILES.journalDir)
+    .filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n))
+    .map((n) => n.slice(0, 10))
+    .sort();
+  for (const day of all) {
+    if (fromDay && day < fromDay) continue;
+    if (toDay && day > toDay) continue;
+    targets.push(day);
+  }
+} else {
+  for (let d = days; d >= 1; d -= 1) targets.push(dayKey(Date.now() - d * 86400000));
+}
+
 const rows = [];
-for (let d = days; d >= 1; d -= 1) {
-  const day = dayKey(Date.now() - d * 86400000);
+for (const day of targets) {
   for (const r of readJournal(day)) {
     const text = String(r.text ?? '').trim();
     if (text.length < 10 || text.length > 60) continue;
@@ -127,7 +148,7 @@ lat.sort((a, b) => a - b);
 const p50 = lat[Math.floor(lat.length / 2)] ?? 0;
 const n = queries.length;
 
-console.log(`题量 ${n} 条（取自 ${days} 天前的真实消息）`);
+console.log(`题量 ${n} 条（范围 ${fromDay || ('最近 ' + days + ' 天')} ~ ${toDay || '今天'}）`);
 console.log(`recall@1  ${((hit1 / n) * 100).toFixed(0)}%`);
 console.log(`recall@3  ${((hit3 / n) * 100).toFixed(0)}%`);
 console.log(`MRR       ${(mrr / n).toFixed(3)}`);
