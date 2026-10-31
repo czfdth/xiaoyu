@@ -3386,15 +3386,23 @@ const RVC_PY = ENGINE_SET.rvc.python || 'python';
 function runSingPipeline(src, outPath, pitch) {
   return new Promise((resolve, reject) => {
     const { spawn } = require_compat('node:child_process');
+    // 子进程输出以前被丢掉，出问题时完全看不到卡在哪。写进 logs/sing-child.log。
+    let singOut = 'ignore';
+    try {
+      const logDir = path.join(STATE_DIR, '..', 'logs');
+      fs.mkdirSync(logDir, { recursive: true });
+      singOut = fs.openSync(path.join(logDir, 'sing-child.log'), 'a');
+    } catch { singOut = 'ignore'; }
+
     const child = spawn(RVC_PY, [SING_PY], {
       env: { ...process.env, SING_IN: src, SING_OUT: outPath, SING_PITCH: String(pitch), PYTHONIOENCODING: 'utf-8' },
-      stdio: 'ignore',
+      stdio: ['ignore', singOut, singOut],
       windowsHide: true
     });
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      reject(new Error('唱歌超时（30 分钟）'));
-    }, 30 * 60 * 1000);
+      reject(new Error('唱歌超时（6 分钟），详见 logs/sing-child.log'));
+    }, 6 * 60 * 1000);
     child.on('exit', (code) => {
       clearTimeout(timer);
       if (fs.existsSync(outPath)) resolve();
