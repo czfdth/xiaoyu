@@ -3815,9 +3815,13 @@ return '【日记】今天还没写。写三到六句，具体到今天真的发
               lastAt = Number(last?.at ?? last?.t) || 0;
             } catch { /* 没文件 */ }
             if (!lastAt || dayKey(lastAt) !== day) {
-              done.introspection = true; changed = true;
-              if (wakeable && !scheduledThisTick) { scheduleWakeV2(wakeable, 'introspection'); scheduledThisTick = true; }
-              log('夜间日常：自省没写，已排一次唤醒');
+              // 只在排了唤醒才标记（旧写法先标记后排，排不上就整天不再试——自省断了 5 天）
+                if (wakeable && !scheduledThisTick) {
+                  scheduleWakeV2(wakeable, 'introspection');
+                  scheduledThisTick = true;
+                  done.introspection = true; changed = true;
+                  log('夜间日常：自省没写，已排一次唤醒');
+                }
             } else { done.introspection = true; changed = true; }
           }
           if (changed) writeOpsState({ nightRituals: done });
