@@ -5,20 +5,11 @@ import { get } from '../api.js';
 import { toastError, fmtClock, fmtTime, pct } from '../store.js';
 import { seriesToPath } from '../lib/spark.js';
 import Card from '../components/Card.vue';
-import BodyViz from '../components/BodyViz.vue';
 
 const route = useRoute();
 
 const tab = ref(route.query.tab === 'talk' || route.query.q ? 'talk' : 'state');
 const her = ref(null);
-
-// 人体可视化用的当前值（0~1）。用 computed 而不是在模板里算，避免每次重渲染重算。
-const bodyNow = computed(() => ({
-  sleepy: latest('sleepy'),
-  tired: latest('tired'),
-  hungry: latest('hungry'),
-  cold: latest('cold'),
-}));
 const vitals = ref(null);
 const days = ref([]);
 const day = ref('');
@@ -198,16 +189,7 @@ async function refreshState() {
         </div>
       </Card>
 
-      <Card title="她的身体" :dim="agoText(vitals?.now?.ages?.body)" style="margin-bottom: 14px">
-      <BodyViz
-        :body="bodyNow"
-        :mood="her.mood || {}"
-        :note="her.body?.note || ''"
-        :updated-ago-min="vitals?.now?.ages?.body ?? null"
-      />
-    </Card>
-
-    <div class="grid cols-2" style="margin-bottom: 14px">
+      <div class="grid cols-2" style="margin-bottom: 14px">
         <Card title="身体" :dim="agoText(vitals?.now?.ages?.body)">
           <div class="stack" style="gap: 12px">
             <div v-for="b in BODY" :key="b.key">
