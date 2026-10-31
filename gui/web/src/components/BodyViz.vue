@@ -25,6 +25,16 @@ const pills = computed(() => [
 ]);
 
 const moodText = computed(() => String(props.mood?.mood ?? '').trim());
+
+// 心情色调：只影响气泡颜色，不改变数值——她写"有点闷"就显示偏冷的颜色
+const moodTone = computed(() => {
+  const t = moodText.value;
+  if (!t) return 'neutral';
+  if (/高兴|开心|愉快|兴奋|甜|暖/.test(t)) return 'warm';
+  if (/难过|低落|闷|烦|累|烦躁|堵/.test(t)) return 'cool';
+  if (/平静|还好|一般|没什么/.test(t)) return 'calm';
+  return 'neutral';
+});
 </script>
 
 <template>
@@ -35,7 +45,7 @@ const moodText = computed(() => String(props.mood?.mood ?? '').trim());
         <span class="bv-pill-label">{{ p.label }}</span>
         <span class="bv-pill-value">{{ p.value }}<small>%</small></span>
       </div>
-      <div v-if="moodText" class="bv-pill bv-pill-mood" :title="props.mood?.why || ''">
+      <div v-if="moodText" class="bv-pill bv-pill-mood" :class="`tone-${moodTone}`" :title="props.mood?.why || ''">
         <span class="bv-pill-label">心情</span>
         <span class="bv-pill-value bv-mood">{{ moodText }}</span>
       </div>
@@ -120,6 +130,11 @@ const moodText = computed(() => String(props.mood?.mood ?? '').trim());
 .bv-pill-value { font-size: 17px; font-weight: 700; color: #b2354f; }
 .bv-pill-value small { font-size: 10px; font-weight: 600; margin-left: 1px; }
 .bv-pill-mood { background: rgba(255, 236, 214, 0.6); border-color: rgba(240, 180, 120, 0.4); }
+.bv-pill-mood.tone-warm { background: rgba(255, 226, 200, 0.72); border-color: rgba(240, 160, 90, 0.5); }
+.bv-pill-mood.tone-cool { background: rgba(214, 224, 240, 0.72); border-color: rgba(130, 155, 190, 0.5); }
+.bv-pill-mood.tone-cool .bv-mood { color: #4a6180; }
+.bv-pill-mood.tone-calm { background: rgba(226, 236, 226, 0.7); border-color: rgba(140, 170, 140, 0.45); }
+.bv-pill-mood.tone-calm .bv-mood { color: #4d6b4d; }
 .bv-mood { font-size: 13px; font-weight: 600; color: #a35a1e; }
 .bv-figure { width: 100%; max-height: 420px; }
 .bv-foot {
