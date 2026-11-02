@@ -398,6 +398,16 @@ ${blocked ? '<form><h1>远程访问没开</h1><p>先在本机控制台「配置 
     return reply.type(type).send(fs.createReadStream(full));
   });
 
+  // index.html 不缓存：旧 html + 新构建 = 请求不存在的 JS → 白屏。
+  // 只对 HTML 生效，静态资源（带 hash）仍然走长缓存。
+  app.addHook('onSend', async (req, reply, payload) => {
+    try {
+      const ct = String(reply.getHeader('content-type') ?? '');
+      if (ct.includes('text/html')) reply.header('Cache-Control', 'no-store, must-revalidate');
+    } catch { /* 不改也没关系 */ }
+    return payload;
+  });
+
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api')) {
       reply.code(404).send({ error: '接口不存在' });
