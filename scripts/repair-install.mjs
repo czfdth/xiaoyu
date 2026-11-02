@@ -14,9 +14,39 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.resolve(HERE, '..');
-const INSTALL = process.env.XIAOYU_HOME || path.join(process.env.LOCALAPPDATA, 'xiaoyu');
+const INSTALL = path.resolve(process.env.XIAOYU_HOME || path.join(process.env.LOCALAPPDATA, 'xiaoyu'));
 const FIX = process.argv.includes('--fix');
+
+// 找"源"（仓库）。以前用 path.resolve(HERE,'..')：脚本一被复制进安装目录，
+// 源和目标是同一个路径，于是永远报"完整"——2026-11-02 就这样漏掉了 17 个文件。
+function looksLikeRepo(dir) {
+  return fs.existsSync(path.join(dir, 'src', 'paths.js'))
+    && fs.existsSync(path.join(dir, 'gui', 'server', 'app.mjs'));
+}
+
+function findRepo() {
+  const explicit = process.argv.find((a) => a.startsWith('--repo='));
+  const candidates = [
+    explicit ? explicit.slice('--repo='.length) : '',
+    process.env.XIAOYU_REPO ?? '',
+    path.resolve(HERE, '..'),
+    'C:\\Users\\best\\ai-her\\dist\\xiaoyu',
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    const abs = path.resolve(dir);
+    if (abs === INSTALL) continue;          // 源不能等于目标
+    if (looksLikeRepo(abs)) return abs;
+  }
+  return '';
+}
+
+const REPO = findRepo();
+if (!REPO) {
+  console.error('找不到仓库（需要含 src/paths.js 和 gui/server/app.mjs）。');
+  console.error('用 --repo=<路径> 或设置 XIAOYU_REPO 指定。');
+  process.exit(2);
+}
 
 // 需要同步的目录（递归）与文件（单个）
 const DIRS = ['src', 'scripts', 'bin', 'tools', 'roles', 'gui/server', 'gui/shared', 'gui/dist', 'eval', 'tests'];
