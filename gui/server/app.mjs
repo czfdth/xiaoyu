@@ -53,6 +53,20 @@ export async function buildApp({ guiDir }) {
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
   // 登录页是普通 HTML 表单，提交时 Content-Type 是 application/x-www-form-urlencoded。
   // Fastify 默认只解析 JSON，不注册这个解析器的话，直接提交表单会 415 而不是校验密码（安全审查 P1-02）。
+  // 空 body 当成 {}：前端有些 POST 只是"触发一个动作"（比如标记已读），
+  // 会带 content-type: application/json 但没 body，Fastify 默认会直接 400：
+  // "Body cannot be empty when content-type is set to 'application/json'"。
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    const raw = String(body ?? '').trim();
+    if (!raw) return done(null, {});
+    try {
+      return done(null, JSON.parse(raw));
+    } catch (error) {
+      error.statusCode = 400;
+      return done(error);
+    }
+  });
+
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (req, body, done) => {
     try {
       const params = new URLSearchParams(String(body ?? ''));

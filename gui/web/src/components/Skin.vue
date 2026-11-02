@@ -1,4 +1,8 @@
 <script setup>
+// 视频走运行时路径：文件缺失时不影响构建（构建期不解析）
+const mediaBg = '/media/skin-bg.mp4';
+const mediaBoot = '/media/skin-boot.mp4';
+
 // 视频皮肤：把 dsh-video-skin 的设计语言搬到小鱼控制台。
 //
 // 原包是 DSH 的客户端插件，不能直接装到这个 Vue 控制台里，所以这里做等价实现：
@@ -152,7 +156,7 @@ onUnmounted(() => {
       ref="bgEl"
       class="skin-bg"
       :style="{ opacity: 1 }"
-      src="/media/skin-bg.mp4"
+      :src="mediaBg"
       autoplay
       muted
       loop
@@ -167,7 +171,7 @@ onUnmounted(() => {
       <video
         ref="bootEl"
         class="boot-video"
-        src="/media/skin-boot.mp4"
+        :src="mediaBoot"
         playsinline
         :class="{ ready: bootReady }"
         @ended="onBootEnded"
