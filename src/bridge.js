@@ -3636,22 +3636,22 @@ async function main() {
   /** 按唤醒原因给一句具体的事（否则"task"唤醒她只会翻一眼消息就继续睡）。 */
   function reasonHintLine(reason) {
     const r = String(reason || '');
-    if (r === 'dream') {
+    if (r.includes('dream')) {
       return '【今晚的梦】把今天剩下的碎片拼成一个梦写下来（qq_dream），场景可以荒唐、可以突然跳，一两段就够。写完就睡。\n\n';
     }
-    if (r === 'diary') {
+    if (r.includes('diary')) {
 return '【日记】今天还没写。写三到六句，具体到今天真的发生的一件小事：'
       + '时间、在哪、谁说了什么、你当时什么反应。'
       + '不用总结升华，也别写成汇报（qq_diary_write）。'
       + '如果今天确实平淡，就写平淡本身——但要有具体的细节，不要"今天还行"这种。\n\n';
     }
-    if (r === 'fantasy') {
+    if (r.includes('fantasy')) {
       return '【随便想想】想一件没发生的事写下来（qq_fantasy_write）：可以荒唐、可以温柔、可以有点难过，「要是……就好了」那种。一两句就行。\n\n';
     }
-    if (r === 'introspection') {
+    if (r.includes('introspection')) {
       return '【回头看】想一句你刚才为什么那样说话（qq_introspect），不是汇报，是回头看自己。一句就够。\n\n';
     }
-    if (r === 'memoir') {
+    if (r.includes('memoir')) {
       return '【回忆录】有值得留下的段落就写一章（qq_memoir_write），按时间顺序、像写给以后的自己。\n\n';
     }
     return '';
@@ -12689,6 +12689,13 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
   };
 
   // 唤醒原因可能带子类型（如 keyword:小鲸鱼、speaker:昵称），取冒号前的基名计算优先级。
+  // 仪式类唤醒（自省/幻想/日记/梦/回忆录）：排上之后不被普通消息覆盖，
+  // 否则她醒来只回消息，"回头看看自己"那件事又拖过去了（10-31 23:00 就这么丢的）。
+  const RITUAL_REASONS = new Set(['introspection', 'fantasy', 'diary', 'dream', 'memoir']);
+  function isRitualReason(reason) {
+    return RITUAL_REASONS.has(String(reason ?? '').split(':')[0]);
+  }
+
   function wakePriorityV2(reason) {
     const base = String(reason ?? '').split(':')[0];
     return WAKE_PRIORITY[base] ?? 0;
@@ -12713,7 +12720,9 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
     if (st.pendingWakeTimer) {
       // 合并窗口内已有待发送唤醒：按优先级升级最终原因，避免先概率后 @ 却仍按概率唤醒。
       const cur = st.pendingWakeReason || reason;
-      if (wakePriorityV2(reason) > wakePriorityV2(cur)) {
+      if (isRitualReason(cur) && !isRitualReason(reason)) {
+        // 保留仪式理由：未读照样进提示词，但"该做的那件事"不能丢
+      } else if (wakePriorityV2(reason) > wakePriorityV2(cur)) {
         st.pendingWakeReason = reason;
         log(`[reserved2] 合并窗口内升级唤醒原因 ${key}: ${cur} -> ${reason}`);
       }
