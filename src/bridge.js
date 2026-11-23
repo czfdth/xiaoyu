@@ -13916,6 +13916,23 @@ const extra = (mem || '') + (mood || '') + anniversaryLine() + projectLine() + c
                 const safeMsg = shouldAuditKey(key) && SENSITIVE_RE.test(msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
                 // 以前这里只发 QQ、不写日志：出问题时 bridge.log 里什么都没有，排查只能靠猜（PR #24）。
                 log(`⚠️ agent 处理出错 (${key})：${safeMsg}`);
+                // 模型偶尔把工具参数吐成非法 JSON（瞬时抖动）。重跑一次通常就好；
+                // 以前这一轮直接作废，她表现为"被拍了没反应"。这里补一次自动重试。
+                if (/invalid JSON|tool input/i.test(safeMsg)) {
+                  try {
+                    if (!globalThis.__toolJsonRetryAt) globalThis.__toolJsonRetryAt = new Map();
+                    const last = globalThis.__toolJsonRetryAt.get(key) ?? 0;
+                    if (Date.now() - last > 60000) {
+                      globalThis.__toolJsonRetryAt.set(key, Date.now());
+                      setTimeout(() => {
+                        try {
+                          scheduleWakeV2(key, 'retryToolJson');
+                          log('[retry] 工具参数解析失败，90s 后补一次唤醒 ' + key);
+                        } catch { /* 排不上就算了 */ }
+                      }, 90 * 1000);
+                    }
+                  } catch { /* 重试失败不影响主流程 */ }
+                }
                 // ① 告警：连续出错 / 余额不足 / 上下文爆表都会被这里接住
                 try { alertCenter.report(classifyError(safeMsg), safeMsg); } catch { /* 告警失败不影响回复 */ }
                 // 余额见底时补一句人话：至少让对方知道不是"她不回"，而是这边卡住了
